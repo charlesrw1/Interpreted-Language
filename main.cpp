@@ -112,7 +112,7 @@ const char* keyword_list[] = {
 #include <functional>
 using Variable = std::string;
 using Function = std::string;
-
+/*
 struct KeyOp
 {
     enum Type
@@ -142,13 +142,17 @@ struct KeyOp
         ELIF,
         ENDKEYWORD,
 
+        COMMA,
+
         FUNCTION
     }type;
     KeyOp(KeyOp::Type type) : type(type) {}
+    ~KeyOp() {}
 
     // Only used if function is type
     std::string function_name;
 };
+
 
 struct Value
 {
@@ -158,30 +162,205 @@ struct Value
         STR,
         VAR
     }type;
-    Value(Value::Type type) : type(type) {}
-    ~Value() {}
     union
     {
         int i;
-        std::string str;
-        Variable var;
-    };
+        string* str;
+    }u;
+    Value(Value::Type type) : type(type) 
+    {
+        if(type == STR || type == VAR) {
+            u.str = new string;
+        }
+    }
+    ~Value() 
+    {
+        if(type == STR || type == VAR) {
+            delete u.str;
+        }
+    }
 };
+*/
 struct Token
 {
-    enum Type
+    enum Specific
+    {
+        FUNCTION,
+
+        //OPERATORS
+        LPAREN,
+        RPAREN,
+        NEGATE,
+        MULT,
+        DIV,
+        MOD,
+        PLUS,
+        MINUS,
+        LESS,
+        LESSEQ,
+        GREAT,
+        GREATEQ,
+        EQUALS,
+        NOTEQUALS,
+        LOGAND,
+        LOGOR,
+
+        //VALUE TYPES
+        INT,
+        STR,
+        VAR,
+        
+        //KEYWORDS
+        IF,
+        ELSE,
+        ELIF,
+
+        COMMA
+    }s_type;
+    enum General
     {
         VALUE,
-        OPERATOR
-    }type;
-    Token(Type type) : type(type) {}
-    union
-    {
-        Value val;
-        KeyOp keyop;
-    };
-};
+        OPERATOR,
+        SEPERATOR,
+    }g_type;
 
+    Token(General type) : g_type(type) {}
+    // Used for: function name, variable name, or string literal
+    string string_var;
+
+    // Data type value, later in union
+    int integer;
+};
+#include <assert.h>
+#include <stdexcept>
+
+// Returns 0 if not operator, returns 1 if 1 length op, 2 if 2 length op (==, <=,..)
+// Adds to output
+const char op_symbols []= {'F','(',')','!','*','/','%','+','-','<','>','=','&','|'};
+int check_for_operator(const std::string& line, const int index, std::vector<Token>& output)
+{
+    Token tok(Token::OPERATOR);
+    bool is_op = false;
+    int i;
+    for(i = 1; i < 14; i++) {
+        if(line.at(index)==op_symbols[i]) {
+            is_op = true;
+            break;
+        }
+    }
+    if(!is_op) return 0;
+
+    if(i >= 9 || i==3) {
+        if(line.size() > index+1) {
+            char next = line.at(index + 1);
+            switch(i)
+            {
+            case 3:
+                if(next == '=') 
+                    i=Token::NOTEQUALS;
+            // <
+            case 9:
+                if(next == '=')
+                    i=Token::LESSEQ;
+                break;
+            // >
+            case 10:
+                i = Token::GREAT;
+                if(next == '=')
+                    i+=1;
+                break;
+            // =
+            case 11:
+                if(next == '=')
+                    i = Token::EQUALS;
+                else {
+                    throw std::runtime_error("EQUALS (=) not supported, use SET function");
+                }
+            case 12:
+                if(next == '&')
+                    i = Token::LOGAND;
+                else {
+                    throw std::runtime_error("& not supported");
+                }
+            case 13:
+                if(next =='|')
+                    i = Token::LOGOR;
+                else {
+                    throw std::runtime_error("| not supported");
+                }
+            }
+        }
+    }
+    tok.s_type = (Token::Specific)i;
+    output.push_back(tok);
+
+    return 1 + (i==10||i==12||i==13||i==14||i==15||i==16);
+}
+int func(int& a)
+{
+    a = 10;
+    return 10;
+}
+int check_for_symbol(const std::string& line, const int index, std::vector<Token>& output)
+{
+    
+    char ch = line.at(index);
+    if(isdigit(ch)) return -1;
+    // variable sign
+    bool var = false;
+    if(ch == '$') {
+        var = true;
+        ch = line.at(index+1);
+    }
+    int offset = 0;
+    while(isalpha(ch) || isdigit(ch) || ch == '_') {
+        ch = line.at(index + var + ++offset);
+    }
+    if(var && offset == 0) {
+        throw std::runtime_error("Unexpected $ symbol");
+    }
+    std::string word = line.substr(index+var, offset);
+
+    Token tok(Token::OPERATOR);
+    if(var) {
+        printf("Variable parsed: %s\n", word.c_str());
+        tok.g_type = Token::VALUE;
+        tok.s_type = Token::VAR;
+        tok.string_var = word;
+    }
+    else {
+        printf("Function parsed: %s\n", word.c_str());
+        tok.s_type = Token::FUNCTION;
+        tok.string_var = word;
+    }
+
+    output.push_back(tok);
+
+    return offset + var - 1;
+}
+// only integers for now
+int check_for_literals(const std::string& line, const int index, std::vector<Token>& output)
+{
+    char ch = line.at(index);
+    if(!isdigit(ch) || line.size()<index+2) return -1;
+    // ERROR! check indicies
+    int offset = 1;
+    ch = line.at(index+offset);
+    while(isdigit(ch) && line.size() > index+offset+1) {
+        ch = line.at(index + ++offset);
+    }
+    string str_num = line.substr(index,offset).c_str();
+    printf("Integer found: %s\n", str_num.c_str());
+    int res = atoi(str_num.c_str());
+
+    Token tok(Token::VALUE);
+    tok.s_type = Token::INT;
+    tok.integer = res;
+
+    output.push_back(tok);
+    
+    return offset-1;
+}
 
 #include <fstream>
 #include <sstream>
@@ -189,7 +368,7 @@ void remove_white_space(string& str)
 {
     int i;
     for(i = 0; i < str.size(); i++) {
-        if(str.at(i)!=' ') break;
+        if(str.at(i)!=' '&&str.at(i)!='\t') break;
     }
     str.erase(0,i);
 }
@@ -205,34 +384,14 @@ bool test_open_file(std::string* result, const char* file_name)
     (*result) = ss.str();
     return true; 
 }
-bool is_operator(char c)
-{
-    return c=='+' || c=='-' || c=='*' || c=='/' || c=='%';
-}
-// hack for now
-const char* prec = "/*%-+p";
-bool precedence(char o1, char o2)
-{
-    for(int i = 0; i < 6; i++) {
-        if(prec[i]==o2)
-            return false;
-        else if(prec[i]==o1)
-            return true;
-    }
-}
-struct Token
-{
-
-};
 #include <iostream>
 int main()
 {
-    
+    int a = 1;
+    int b = a+func(a);
+    std::cout << b << "\n";
+
     std::string source_code;
-    std::cout << sizeof(source_code);
-    Value val(Value::INT);
-    std::cout << sizeof(val);
-    return 0;
     
     if(!test_open_file(&source_code, "test1.txt")) {
         return 1;
@@ -243,10 +402,6 @@ int main()
     std::stringstream helper;
     helper << source_code;
     std::string line;
-    std::vector<Value> stack;
-
-    std::vector<char> os;
-    std::vector<int> vs;
 
     std::vector<Token> tokenized_input;
 
@@ -257,69 +412,33 @@ int main()
             continue;
         }
         bool in_word = false;
+        bool in_var = false;
         bool in_num = false;
-        int word_index = 0;
+        int word_start = 0;
         for(int i = 0; i < line.size(); i++) {
-            if(line[i]=='(')
-                os.push_back('(');
-            if(!in_word && isalpha(line[i])) {
-                word_index = i;
-                in_word = true;
-            }
-            else if(in_word && line[i]==' ') {
-                in_word = false;
-                std::cout << "Symbol found: " << line.substr(word_index, i) << std::endl;
+            if(line.at(i)==' '||line.at(i)=='\t') continue;
 
-                // Temporary
-                os.push_back('p');
+            int op_res = check_for_operator(line, i, tokenized_input);
+            // CHECK FOR CURRENT WORDS/NUMS
+            if(op_res==1) continue;
+            else if(op_res==2) {
+                i++; continue;
             }
-            else if(in_word) {
-                if(!isalpha(line[i]) && line[i]!='_') {
-                    printf("INVALID SYMBOL SYNTAX: %c\n", line[i]);
-                    return 1;
-                }
+            int word_res = check_for_symbol(line, i, tokenized_input);
+            if(word_res >= 0)  {
+                i+=word_res;
+                continue;
             }
-            // 
-            
-            else if(is_operator(line[i])) {
-                // while back operator is above current
-                if(os.back()=='(') {
-                    goto SKIP;
-                }
-                while(precedence(os.back(), line[i])) {
-                    int val2 = vs.back();
-                    vs.pop_back();
-                    int val1;
-                    if(os.size()>0) {
-                    val1 = vs.back();
-                    vs.pop_back();
-                    }
-                    int res;
-                    switch(os.back())
-                    {
-                    case '*':
-                        res = val1*val2;
-                        break;
-                    case '/':
-                        res = val1/val2;
-                        break;
-                    case '+':
-                        res = val1+val2;
-                        break;
-                    case '-':
-                        res = val1-val2;
-                        break;
-                    case 'p':
-                        std::cout << val2 << std::endl;
-                        goto SKIP;
-                        break;
-                    }
-                    vs.push_back(res);
-                }
-                SKIP:
-            }
-            else if(isdigit())
 
+            int num_res = check_for_literals(line, i, tokenized_input);
+            if(num_res>=0) {
+                i+=num_res;
+                continue;
+            }
+
+            // failed to parse
+            printf("UNKNOWN SYMBOL @ index %d, line=%s", i, line.c_str());
+            return 1;
 
         }
     }
