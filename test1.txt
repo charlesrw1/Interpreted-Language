@@ -1,8 +1,16 @@
+(print (10+2*(4 == 18)))
+(print (1000*34-5))
+
 #this is a comment
-(print 10+2*4)
+#(print 10+2*4 == (123&&1)<(6!=5))
+#(==<=&&||>=!=)
 
 #(set $player_lvl 1)
 #(if ((rand 1 20) > $player_stat_health)
 #	((set $special_val 1), (exit m 2)))
 #(else (exit m 1))
 
+#(set($player_lvl,1))
+#(exit(m,1))
+#(let i = 0)
+#(while(i<10)())
