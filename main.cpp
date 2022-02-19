@@ -5,9 +5,28 @@
 #include <cstring>
 #include <assert.h>
 #include <stdexcept>
+#include <cstdio>
+#include <map>
 
 using std::string;
 
+struct Variable
+{
+
+};
+// base block, execute method just calls the body statement code
+
+
+constexpr unsigned int string_hash(const char* str)
+{
+    unsigned h = 37;
+    while(*str) 
+    {
+        h=(h*54059) ^ (str[0]*76963);
+        str++;
+    }
+    return h%86969;
+}
 std::unordered_map<string, int> shared_variables;
 int get_variable(string name)
 {
@@ -27,77 +46,6 @@ void set_variable(string name, int new_val)
     shared_variables[name] = new_val;
 }
 
-enum Comparison{
-    EQUALS,
-    NOTEQUALS,
-    GREATER,
-    LESSER
-};
-struct Condition
-{
-    string variable;
-    Comparison type;
-    int val;
-};
-bool if_cond(const Condition& cond)
-{
-    int variable = get_variable(cond.variable);
-    switch(cond.type) {
-    case EQUALS:
-        return variable == cond.val;
-    case NOTEQUALS:
-        return variable != cond.val;
-    }
-    return false;
-}
-
-enum Type
-{
-    REPLY,
-    MESSAGE,
-    LEAVE,
-    OTHER,
-};
-using Logic = string;
-struct Message
-{
-    string person;
-    string message;
-    
-    // Default exit
-    Type exit_type;
-    unsigned int exit_id;
-
-    // Message condition, skips if false
-    Condition message_cond;
-};
-#define MAX_REPLIES 6
-struct ReplySet
-{
-    unsigned int reply_ids[6];
-    unsigned char num_replies;   
-};
-struct Reply
-{
-    string message;
-    Condition reply_cond;
-    bool display_if_false;
-    bool seen;
-    bool hide_if_choosen;
-};
-void func()
-{
-    return;
-}
-void parse_logic(string logic)
-{
-    func();
-    int func;
-}
-
-#include <vector>
-#include <cstdio>
-
 enum class keywords{
     IF,
     ELSE,
@@ -115,75 +63,7 @@ const char* keyword_str[] = {
     "if", "else", "elif", "var"
 };
 #include <functional>
-/*
-struct KeyOp
-{
-    enum Type
-    {
-        //OPERATORS
-        LPAREN,
-        RPAREN,
-        NEGATE,
-        MULT,
-        DIV,
-        MOD,
-        PLUS,
-        MINUS,
-        LESS,
-        LESSEQ,
-        GREAT,
-        GREATEQ,
-        EQUALS,
-        NOTEQUALS,
-        LOGAND,
-        LOGOR,
-        
-        //KEYWORDS
-        KEYWORDBEGIN,
-        IF,
-        ELSE,
-        ELIF,
-        ENDKEYWORD,
 
-        COMMA,
-
-        FUNCTION
-    }type;
-    KeyOp(KeyOp::Type type) : type(type) {}
-    ~KeyOp() {}
-
-    // Only used if function is type
-    std::string function_name;
-};
-
-
-struct Value
-{
-    enum Type
-    {
-        INT,
-        STR,
-        VAR
-    }type;
-    union
-    {
-        int i;
-        string* str;
-    }u;
-    Value(Value::Type type) : type(type) 
-    {
-        if(type == STR || type == VAR) {
-            u.str = new string;
-        }
-    }
-    ~Value() 
-    {
-        if(type == STR || type == VAR) {
-            delete u.str;
-        }
-    }
-};
-*/
 const char* op_strings[] = {
     "F","(", ")", "!", "*", "/", "%", "+", "-", 
     "<", "<=", ">", ">=", "==", "!=", "&&", "||"};
@@ -210,23 +90,29 @@ struct Token
         NOTEQUALS,
         LOGAND,
         LOGOR,
+        ASSIGNMENT,
 
         //VALUE TYPES
         INT,
         STR,
+        FLOAT,
         VAR,
         
         //KEYWORDS
         IF,
         ELSE,
         ELIF,
+        DECLERATION,
 
-        COMMA
+        COMMA,
+
+        NONE
     }s_type;
     enum General
     {
         VALUE,
         OPERATOR,
+        KEYWORD,
         SEPERATOR,
     }g_type;
 
@@ -258,6 +144,43 @@ struct ResultVal
     }type;
     int integer;
     string str;
+};
+struct Statement
+{
+    int token_start, token_end;
+};
+struct Block
+{
+    Block* parent=NULL;
+    std::vector<Block*> children;
+    std::map<string, Variable> vars;
+    enum Type
+    {
+        ROOT,
+        STATEMENT,
+        IF,
+        ELIF,
+        ELSE,
+        NONE
+    };
+    Type type = ROOT;
+    virtual void execute()
+    {
+        // run through body and execute
+        return;
+    }
+};
+struct StatementBlock : public Block
+{
+    Statement statement;
+
+};
+struct IfBlock : public Block
+{
+    bool has_statement = true;
+    Statement cond_statement;
+    // Can be another ifblock or statement block
+    Block* else_block;
 };
 // Does not pop, just peeks
 int get_integer_from_value(const std::vector<Value>& val_stack, 
@@ -390,6 +313,14 @@ int func(int& a)
     a = 10;
     return 10;
 }
+int check_for_keyword(const string& str)
+{
+    for(int i = 0; i < 4; i++) {
+        if(str== keyword_str[i])
+            return Token::IF + i;
+    }
+    return -1;
+}
 int check_for_symbol(const std::string& line, const int index, std::vector<Token>& output)
 {
     
@@ -418,9 +349,17 @@ int check_for_symbol(const std::string& line, const int index, std::vector<Token
         tok.string_var = word;
     }
     else {
+        int key_check = check_for_keyword(word);
+        if(key_check==-1) {
         printf("Function parsed: %s\n", word.c_str());
         tok.s_type = Token::FUNCTION;
         tok.string_var = word;
+        }
+        else {
+        printf("Keyword parsed: %s\n", word.c_str());
+        tok.g_type = Token::General::KEYWORD;
+        tok.s_type = (Token::Specific)key_check;
+        }
     }
 
     output.push_back(tok);
@@ -428,7 +367,7 @@ int check_for_symbol(const std::string& line, const int index, std::vector<Token
     return offset + var - 1;
 }
 // only integers for now
-int check_for_literals(const std::string& line, const int index, std::vector<Token>& output)
+int check_for_num_literal(const std::string& line, const int index, std::vector<Token>& output)
 {
     char ch = line.at(index);
     if(!isdigit(ch) || line.size()<index+2) return -1;
@@ -449,6 +388,29 @@ int check_for_literals(const std::string& line, const int index, std::vector<Tok
     output.push_back(tok);
     
     return offset-1;
+}
+int check_for_str_literal(const std::string& line, const int index, std::vector<Token>& output)
+{
+    char ch = line.at(index);
+    if(ch!='\"') return -1;
+    assert(index+1<line.size() && "Can't find matching pair of \"");
+    ch = line.at(index+1);
+    int offset = 1;
+    while(ch!='\"')
+    {
+        assert(index+offset+1 < line.size());
+        ch=line.at(index+ ++offset);
+    }
+    string literal = line.substr(index+1, offset-1);
+    printf("String literal found: %s\n",literal.c_str());
+
+    Token tok(Token::VALUE);
+    tok.s_type = Token::STR;
+    tok.string_var = literal;
+
+    output.push_back(tok);
+
+    return offset;
 }
 
 #include <fstream>
@@ -475,7 +437,7 @@ bool test_open_file(std::string* result, const char* file_name)
 }
 
 // Evaluates operators from val stack, POPS THEM TOO!
-int evaluate_operator(Token::Specific op_type, std::vector<Value>& val_stack, 
+void evaluate_operator(Token::Specific op_type, std::vector<Value>& val_stack, 
 const std::vector<Token>& tokens, std::vector<ResultVal>& result_array)
 {   
     int val1,val2;
@@ -534,7 +496,12 @@ const std::vector<Token>& tokens, std::vector<ResultVal>& result_array)
         throw std::runtime_error("unknown symbol: " + op_type);
         break;
     }
-    return result;
+    ResultVal rv;
+    rv.type = ResultVal::INT;
+    rv.integer = result;
+    result_array.push_back(rv);
+    int index = result_array.size()-1;
+    val_stack.push_back({Value::RESULT, index});
 }
 void push_operator(std::vector<int>& op_stack, std::vector<Value>& val_stack, 
 const std::vector<Token>& tokens, std::vector<ResultVal>& result_arr, int op_index)
@@ -557,13 +524,7 @@ const std::vector<Token>& tokens, std::vector<ResultVal>& result_arr, int op_ind
                 call_function(top, val_stack, result_arr, tokens);
             }
             else {
-                int result = evaluate_operator(top.s_type,val_stack,tokens, result_arr);
-                ResultVal rv;
-                rv.type = ResultVal::INT;
-                rv.integer = result;
-                result_arr.push_back(rv);
-                int index = result_arr.size()-1;
-                val_stack.push_back({Value::RESULT, index});
+                evaluate_operator(top.s_type,val_stack,tokens, result_arr);
             }
             op_stack.pop_back();
         }
@@ -583,19 +544,137 @@ void evaluate_till_lparen(std::vector<int>& op_stack, std::vector<Value>& val_st
             call_function(op, val_stack, result_arr, tokens);
         }
         else {
-            int result = evaluate_operator(op.s_type,val_stack,tokens, result_arr);
-            ResultVal rv;
-            rv.type = ResultVal::INT;
-            rv.integer = result;
-            result_arr.push_back(rv);
-            int index = result_arr.size()-1;
-            val_stack.push_back({Value::RESULT, index});
+            evaluate_operator(op.s_type,val_stack,tokens, result_arr);
         }
         op_stack.pop_back();
     }
     assert(op_stack.size()>0 && tokens.at(op_stack.back()).s_type == Token::LPAREN);
     // Remove l parentheses
     op_stack.pop_back();
+}
+// My lord... is that legal?
+void build_base_tree(Block* root, const std::vector<Token>& tokens, int start, int end);
+
+void build_conditional(Block* root, const std::vector<Token>& tokens, int start, int end)
+{
+    IfBlock* temp = new IfBlock;
+    int paren = 0;
+    int index = start;
+    do
+    {
+        if(tokens.at(index).s_type==Token::LPAREN)
+            paren++;
+        if(tokens.at(index).s_type==Token::RPAREN)
+            paren--;
+        index++;
+    } while (paren!=0 && index < end);
+    assert(paren==0);
+    temp->cond_statement.token_start = start;
+    temp->cond_statement.token_end = index-1;
+    temp->parent = root;
+    temp->type = Block::IF;
+    root->children.push_back(temp);
+
+    build_base_tree(temp, tokens, index, end);
+}
+void build_if_else(Block* root, const std::vector<Token>& tokens, int start, int end)
+{
+    IfBlock* previous = dynamic_cast<IfBlock*>(root->children.back());
+    assert(previous!=NULL);
+
+
+    IfBlock* temp = new IfBlock;
+    previous->else_block = temp;
+
+    int paren = 0;
+    int index = start;
+    do
+    {
+        if(tokens.at(index).s_type==Token::LPAREN)
+            paren++;
+        if(tokens.at(index).s_type==Token::RPAREN)
+            paren--;
+        index++;
+    } while (paren!=0 && index < end);
+    assert(paren==0);
+    temp->cond_statement.token_start = start;
+    temp->cond_statement.token_end = index-1;
+    temp->parent = previous;
+    temp->type = Block::ELIF;
+
+    build_base_tree(temp, tokens, index, end);
+
+}
+void build_else(Block* root, const std::vector<Token>& tokens, int start, int end)
+{
+    IfBlock* previous = dynamic_cast<IfBlock*>(root->children.back());
+    assert(previous!=NULL);
+
+    IfBlock* temp = new IfBlock;
+    temp->has_statement = false;
+    previous->else_block = temp;
+    temp->parent = previous;
+    temp->type = Block::ELSE;
+    
+    build_base_tree(temp, tokens, start, end);
+
+}
+void build_general_statement(Block* root, const std::vector<Token>& tokens, int start, int end)
+{
+    StatementBlock* temp = new StatementBlock;
+    temp->type = Block::STATEMENT;
+    temp->parent = root;
+    temp->statement.token_start = start;
+    temp->statement.token_end = end;
+    root->children.push_back(temp);
+}
+void analyze_statement(Block* root, const std::vector<Token>& tokens, int start, int end, Block::Type& previous)
+{
+    Token::Specific first_statement=Token::NONE;
+    // Find first statement
+    for(int i = start; i < end && i < tokens.size(); i++) {
+        if(tokens.at(i).s_type==Token::LPAREN) continue;
+        first_statement=tokens.at(i).s_type; break;
+    }
+    assert(first_statement!=Token::NONE);
+    switch(first_statement)
+    {
+    case Token::ELIF:
+        assert(previous==Block::IF || previous==Block::ELIF);
+        build_if_else(root, tokens, start+2, end);
+        previous = Block::ELIF;
+        break;
+    case Token::ELSE:
+        assert(previous==Block::IF || previous==Block::ELIF);
+        build_else(root, tokens, start+2, end);
+        previous = Block::ELSE;
+        break;
+    case Token::IF:
+        build_conditional(root, tokens, start+2, end);
+        previous = Block::IF;
+        break;
+    default:
+        build_general_statement(root, tokens, start, end);
+        previous = Block::STATEMENT;
+        break;
+    }
+}
+void build_base_tree(Block* root, const std::vector<Token>& tokens, int start, int end)
+{
+    int paren_level = 0;
+    int statement_start = start;
+    Block::Type previous = Block::NONE;
+    for(int i = start; i < end; i++) {
+        if(tokens.at(i).s_type==Token::LPAREN)
+            paren_level++;
+        if(tokens.at(i).s_type==Token::RPAREN)
+            paren_level--;
+        if(paren_level==0) {
+            analyze_statement(root, tokens, statement_start, i, previous);
+            statement_start = i+1;
+        }
+    }
+
 }
 void init()
 {
@@ -610,11 +689,6 @@ void init()
 int main()
 {
     init();
-    int a = 1;
-    int b = a+func(a);
-    std::cout << strlen(op_strings[0]) << "\n";
-    std::cout << strlen(op_strings[16]) << "\n";
-
 
     std::string source_code;
     
@@ -623,12 +697,13 @@ int main()
     }
     // Current status
     unsigned int current_id;
-    Type current_type;
+    //Type current_type;
     std::stringstream helper;
     helper << source_code;
     std::string line;
 
     std::vector<Token> token_array;
+    Block program_root;
 
     //Tokenize
     while(std::getline(helper,line))
@@ -650,13 +725,18 @@ int main()
             else if(op_res==2) {
                 i++; continue;
             }
+            int str_res = check_for_str_literal(line,i,token_array);
+            if(str_res>=0) {
+                i+= str_res;
+                continue;
+            }
             int word_res = check_for_symbol(line, i, token_array);
             if(word_res >= 0)  {
                 i+=word_res;
                 continue;
             }
 
-            int num_res = check_for_literals(line, i, token_array);
+            int num_res = check_for_num_literal(line, i, token_array);
             if(num_res>=0) {
                 i+=num_res;
                 continue;
@@ -668,6 +748,9 @@ int main()
 
         }
     }
+    // Build control flow tree
+    build_base_tree(&program_root, token_array, 0, token_array.size());
+
     // Evaluate with shunting yard algorithm
     // stacks with index into token vector (don't copy around strings)
     int index = 0;
@@ -714,13 +797,7 @@ int main()
             call_function(tok, val_stack, result_array, token_array);
         }
         else {
-            int result = evaluate_operator(tok.s_type,val_stack,token_array,result_array);
-            ResultVal rv;
-            rv.type = ResultVal::INT;
-            rv.integer = result;
-            result_array.push_back(rv);
-            int index = result_array.size()-1;
-            val_stack.push_back({Value::RESULT, index}); 
+            evaluate_operator(tok.s_type,val_stack,token_array,result_array);
         }
         op_stack.pop_back();
     }

@@ -1,5 +1,8 @@
 (print (10+2*(4 == 18)))
-(print (1000*34-5))
+(if(10==1)(print "First")(print "Second statement"))
+(elif(10<20)(print "Second!!"))
+(else (print "Third!"))
+
 
 #this is a comment
 #(print 10+2*4 == (123&&1)<(6!=5))
