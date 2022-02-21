@@ -43,6 +43,7 @@ struct Variable
 struct Enviornment;
 struct Block;
 struct Token;
+struct FuncBlock;
 struct ResultVal
 {   
     enum Type
@@ -56,16 +57,18 @@ struct ResultVal
     ResultVal() {}
     ResultVal(ResultVal::Type type) : type(type) {}
     ResultVal(const Token& token);
+    void assign_local_variable(const Token& tok, const Enviornment& env);
     int integer=0;
     std::string str;
 };
-typedef ResultVal(*MacroPtr)(Enviornment& env);
+typedef ResultVal(*MacroPtr)(Enviornment& env, Block& block);
 struct Macro
 {
     MacroPtr ptr;
     // For debugging mainly, -1 for multiple (ie takes all arguments from value stack), used for printing
     int num_arguments;
 };
+typedef std::unordered_map<std::string, FuncBlock*> FunctionTable;
 class Interpreter
 {
 public:
@@ -86,8 +89,6 @@ public:
             return found->second;
         }
         else {
-            // Default all variables to 0
-            // Bad design? maybe
             Variable v; v.type = Variable::NONE;
             variables[name] = v;
         }
@@ -113,7 +114,10 @@ public:
         *variables[name].str = new_val;
     }
     ResultVal get_return_value();
+    FunctionTable functions;
 private:
+    unsigned index = 0;
+
     Block* program_root = nullptr;
     Enviornment* env = nullptr;
 

@@ -34,42 +34,6 @@ constexpr unsigned int string_hash(const char* str)
     }
     return h % 86969;
 }
-//std::unordered_map<string, Variable> shared_variables;
-/*
-Variable& get_variable(string name)
-{
-    auto found = shared_variables.find(name);
-    if(found != shared_variables.end()) {
-        return found->second;
-    }
-    else {
-        // Default all variables to 0
-        // Bad design? maybe
-        Variable v; v.type = Variable::INT; v.integer = 0;
-        shared_variables[name] = v;
-    }
-    return shared_variables[name];
-}
-void init_variable(string name, Variable::Type type)
-{
-    auto found = shared_variables.find(name);
-    if(found != shared_variables.end())
-        return;
-
-    Variable v(type);
-    shared_variables.insert({name,v});
-}
-void set_variable(string name, int new_val)
-{
-    assert(shared_variables[name].type == Variable::INT);
-    shared_variables[name].integer = new_val;
-}
-void set_variable(string name, string new_val)
-{
-    assert(shared_variables[name].type == Variable::STR);
-    *shared_variables[name].str = new_val;
-}
-*/
 
 const char* keyword_str[] = {
     "if", "else", "elif", "var","def"
@@ -82,8 +46,8 @@ struct Token
 {
     enum Specific
     {
-        MACRO,      // functions in C++ accessible in language
         FUNCTION,   // user defined functions in language
+        MACRO,      // functions in C++ accessible in language
 
         //OPERATORS
         LPAREN,
@@ -108,8 +72,8 @@ struct Token
         INT,
         STR,
         FLOAT,
-        G_VAR, //$variable
-        L_VAR, //@variable
+        G_VAR, // $variable
+        L_VAR, // variable
 
         //KEYWORDS
         IF,
@@ -146,6 +110,7 @@ struct Value
     }type;
     int index;
 };
+
 ResultVal::ResultVal(const Token& token)
 {
     assert(token.g_type == Token::VALUE);
@@ -168,6 +133,9 @@ ResultVal::ResultVal(const Token& token)
             type = STR;
         }
     }
+    else if (token.s_type == Token::L_VAR) {
+        throw std::runtime_error("Assign local variables through method assign_local_variable\n");
+    }
     else {
         throw std::runtime_error("Unknown assignment type for ResultVal\n");
     }
@@ -178,6 +146,7 @@ struct Statement
 };
 struct Enviornment
 {
+    Enviornment(Interpreter& inter) : inter(inter) {}
     // read from input, don't get modified for life of program
     std::vector<Token> t_arr;
     // values either literals from tokens or resulting vals from operations
@@ -186,6 +155,14 @@ struct Enviornment
     std::vector<ResultVal> r_arr;
     // index into token array for operators
     std::vector<int> op_stack;
+
+    // variables
+    std::unordered_map<string, Variable> vars;
+    std::vector<string> variable_stack;
+    std::vector<unsigned int> allocated_vars_in_block;
+    
+
+    Interpreter& inter;
 };
 struct Block
 {
@@ -196,7 +173,8 @@ struct Block
     // indices are how many statements come before the blocks
     std::vector<int> statement_indices;
     // Local variables
-    //std::map<string, Variable> vars;
+    //std::unordered_map<string, Variable> vars;
+
     enum Type
     {
         ROOT,
@@ -217,6 +195,24 @@ struct Block
     virtual void execute(Enviornment& env);
     void execute_blocks_and_statements(Enviornment& env);
 };
+void ResultVal::assign_local_variable(const Token& tok, const Enviornment& env)
+{
+    auto find = env.vars.find(tok.string_var);
+    if (find != env.vars.end()) {
+        if (find->second.type == Variable::INT) {
+            integer = find->second.integer;
+            type = INT;
+        }
+        else if (find->second.type == Variable::STR) {
+            str = *find->second.str;
+            type = STR;
+        }
+    }
+    else {
+        throw std::runtime_error("Could not locate local variable for assignment: " + tok.string_var);
+    }
+}
+
 struct IfBlock : public Block
 {
     ~IfBlock()
@@ -226,10 +222,15 @@ struct IfBlock : public Block
     bool has_statement = true;
     Statement cond_statement;
     // Can be another ifblock or statement block
-    Block* else_block;
+    Block* else_block=nullptr;
     virtual void execute(Enviornment& env) override;
 };
-// Does not pop, just peeks
+struct FuncBlock : public Block
+{
+    std::vector<string> parameters;
+    string name;
+};
+// Does not pop, just peeks, UNSAFE!
 int get_integer_from_value(Enviornment& env)
 {
     if (env.val_stack.back().type == Value::TOKEN) {
@@ -239,20 +240,24 @@ int get_integer_from_value(Enviornment& env)
     assert(env.r_arr.at(env.val_stack.back().index).type == ResultVal::INT);
     return env.r_arr.at(env.val_stack.back().index).integer;
 }
-ResultVal get_resultval_from_top(Enviornment& env)
+// SAFER
+ResultVal get_resultval_from_top(Enviornment& env, Block& block)
 {
     ResultVal rv;
     assert(env.val_stack.size() > 0);
     if (env.val_stack.back().type == Value::RESULT) {
         rv = env.r_arr.at(env.val_stack.back().index);
     }
+    else if (env.t_arr.at(env.val_stack.back().index).s_type == Token::L_VAR) {
+        rv.assign_local_variable(env.t_arr.at(env.val_stack.back().index), env);
+    }
     else {
         rv = env.t_arr.at(env.val_stack.back().index);
     }
     return rv;
 }
-#define DEF_LANGMACRO(name) ResultVal name(Enviornment& env)
-typedef ResultVal(*MacroPtr)(Enviornment& env);
+#define DEF_LANGMACRO(name) ResultVal name(Enviornment& env, Block& block)
+typedef ResultVal(*MacroPtr)(Enviornment& env, Block& block);
 
 #include <random>
 DEF_LANGMACRO(my_rand)
@@ -271,8 +276,9 @@ DEF_LANGMACRO(my_rand)
 }
 DEF_LANGMACRO(print)
 {
+    // reads removes all vals from stack
     while (!env.val_stack.empty()) {
-        ResultVal rv = get_resultval_from_top(env);
+        ResultVal rv = get_resultval_from_top(env, block);
         if (rv.type == ResultVal::INT) {
             std::cout << rv.integer << " ";
         }
@@ -281,29 +287,69 @@ DEF_LANGMACRO(print)
         }
         env.val_stack.pop_back();
     }
-    // Printing removes all vals from the stack
     ResultVal result(ResultVal::VOID);
     std::cout << "\n";
 
     return result;
 }
 
-//std::unordered_map<std::string, Function> function_lookup;
 // Calls a built-in macro
-void call_macro(const Token& token, Enviornment& env)
+void call_macro(const Token& token, Enviornment& env, Block& block)
 {
     assert(token.s_type == Token::MACRO);
     auto found = Interpreter::macros.find(token.string_var);
     if (found == Interpreter::macros.end()) {
         throw std::runtime_error("Couldn't find macro: " + token.string_var);
     }
-    ResultVal result = found->second.ptr(env);
+    ResultVal result = found->second.ptr(env, block);
     if (result.type != ResultVal::VOID) {
         env.r_arr.push_back(result);
         int index = env.r_arr.size() - 1;
         env.val_stack.push_back({ Value::RESULT, index });
     }
 };
+
+void call_function(const Token& token, Enviornment& env, Block& block)
+{
+    assert(token.s_type == Token::FUNCTION);
+    auto found = env.inter.functions.find(token.string_var);
+    if (found == env.inter.functions.end()) {
+        throw std::runtime_error("Couldn't find function: " + token.string_var);
+    }
+    // Create new enviornment to call function
+    Enviornment* new_env = new Enviornment(env.inter);
+    // bad, change later
+    new_env->t_arr = env.t_arr;
+    FuncBlock* fu = found->second;
+    // Load parameter variables into function locals
+    assert(env.val_stack.size() >= fu->parameters.size());
+    for (int i = fu->parameters.size()-1; i >= 0; i--) {
+        ResultVal rv = get_resultval_from_top(env, block);
+        if (rv.type == ResultVal::INT) {
+            new_env->vars[fu->parameters.at(i)].type = Variable::INT;
+            new_env->vars[fu->parameters.at(i)].integer = rv.integer;
+        }
+        else {
+            new_env->vars[fu->parameters.at(i)].type = Variable::STR;
+            new_env->vars[fu->parameters.at(i)].str = new string;
+            *new_env->vars[fu->parameters.at(i)].str = rv.str;
+        }
+        env.val_stack.pop_back();
+        new_env->variable_stack.push_back(fu->parameters.at(i));
+    }
+    new_env->allocated_vars_in_block.push_back(fu->parameters.size());
+    // Call function 
+    fu->execute(*new_env);
+    // load result into previous stack
+    if (new_env->val_stack.size() > 0) {
+        ResultVal rv = get_resultval_from_top(*new_env, block);
+        env.r_arr.push_back(rv);
+        int index = env.r_arr.size() - 1;
+        env.val_stack.push_back({ Value::RESULT, index });
+    }
+    // clean up
+    delete new_env;
+}
 // Returns 0 if not operator, returns 1 if 1 length op, 2 if 2 length op (==, <=,..)
 // Adds to output
 int check_for_operator(const std::string& line, const int index, std::vector<Token>& output)
@@ -316,7 +362,7 @@ int check_for_operator(const std::string& line, const int index, std::vector<Tok
     bool double_wide = false;
     if (index + 1 < line.size()) {
         n_ch = line.at(index + 1);
-        if (n_ch == '&' || n_ch == '|' || n_ch == '=')
+        if ((ch=='&'&&n_ch == '&') || n_ch == '|' || n_ch == '=')
             double_wide = true;
     }
     for (i = 1; i < 18; i++) {
@@ -335,7 +381,7 @@ int check_for_operator(const std::string& line, const int index, std::vector<Tok
     }
     if (!is_op) return 0;
 
-    tok.s_type = (Token::Specific)(i+Token::FUNCTION);
+    tok.s_type = (Token::Specific)(i+Token::MACRO);
     output.push_back(tok);
 
     return 1 + double_wide;
@@ -484,14 +530,34 @@ bool test_open_file(std::string* result, const char* file_name)
     (*result) = ss.str();
     return true;
 }
-void assignment_operation(Enviornment& env)
+Variable& get_local_or_global_var(Enviornment& env, const Token& var)
+{
+    assert(var.s_type == Token::G_VAR || var.s_type == Token::L_VAR);
+
+    if (var.s_type == Token::G_VAR) {
+        return Interpreter::get_variable(var.string_var);
+    }
+
+    auto find = env.vars.find(var.string_var);
+    if (find != env.vars.end()) {
+        return find->second;
+    }
+    Variable v;
+    v.type = Variable::NONE;
+    env.allocated_vars_in_block.back()++;
+    env.variable_stack.push_back(var.string_var);
+    env.vars[var.string_var] = v;
+    return env.vars[var.string_var];
+}
+void assignment_operation(Enviornment& env, Block& block)
 {
     assert(env.val_stack.size() >= 2);
     assert(env.val_stack.at(env.val_stack.size() - 2).type == Value::TOKEN);
     const Token& var = env.t_arr.at(env.val_stack.at(env.val_stack.size() - 2).index);
-    assert(var.s_type == Token::G_VAR);
-    Variable& stored_var = Interpreter::get_variable(var.string_var);
-    ResultVal assigned_value = get_resultval_from_top(env);
+    assert(var.s_type == Token::G_VAR || var.s_type == Token::L_VAR);
+// FIX ME, LOCAL VARIABLES
+    Variable& stored_var = get_local_or_global_var(env, var);
+    ResultVal assigned_value = get_resultval_from_top(env, block);
     assert(assigned_value.type == stored_var.type || stored_var.type == Variable::NONE);
     switch (assigned_value.type)
     {
@@ -516,18 +582,18 @@ void assignment_operation(Enviornment& env)
     env.val_stack.pop_back();
 }
 // Evaluates operators from val stack, POPS THEM TOO!
-void evaluate_operator(Token::Specific op_type, Enviornment& env)
+void evaluate_operator(Token::Specific op_type, Enviornment& env, Block& block)
 {
     int val1, val2;
 
     if (op_type == Token::ASSIGNMENT) {
-        return assignment_operation(env);
+        return assignment_operation(env, block);
     }
 
-    val2 = get_resultval_from_top(env).integer;//get_integer_from_value(env);
+    val2 = get_resultval_from_top(env, block).integer;//get_integer_from_value(env);
     env.val_stack.pop_back();
     if (op_type != Token::NEGATE) {
-        val1 = get_resultval_from_top(env).integer;
+        val1 = get_resultval_from_top(env, block).integer;
         env.val_stack.pop_back();
     }
     int result = 0;
@@ -586,14 +652,14 @@ void evaluate_operator(Token::Specific op_type, Enviornment& env)
     int index = env.r_arr.size() - 1;
     env.val_stack.push_back({ Value::RESULT, index });
 }
-void push_operator(Enviornment& env, int op_index)
+void push_operator(Enviornment& env, int op_index, Block& block)
 {
     const Token& pushed = env.t_arr.at(op_index);
-    assert(pushed.s_type >= Token::MACRO && pushed.s_type <= Token::ASSIGNMENT);
+    assert(pushed.s_type >= Token::FUNCTION && pushed.s_type <= Token::ASSIGNMENT);
     while (env.op_stack.size() > 0)
     {
         const Token& top = env.t_arr.at(env.op_stack.back());
-        assert(top.s_type >= Token::MACRO && top.s_type <= Token::ASSIGNMENT);
+        assert(top.s_type >= Token::FUNCTION && top.s_type <= Token::ASSIGNMENT);
         // Reached left parentheses, stop
         if (top.s_type == Token::LPAREN)
             break;
@@ -603,10 +669,10 @@ void push_operator(Enviornment& env, int op_index)
         {
             assert(env.val_stack.size() >= 2);
             if (top.s_type == Token::MACRO) {
-                call_macro(top, env);
+                call_macro(top, env, block);
             }
             else {
-                evaluate_operator(top.s_type, env);
+                evaluate_operator(top.s_type, env, block);
             }
             env.op_stack.pop_back();
         }
@@ -616,16 +682,19 @@ void push_operator(Enviornment& env, int op_index)
     }
     env.op_stack.push_back(op_index);
 }
-void evaluate_till_lparen(Enviornment& env)
+void evaluate_till_lparen(Enviornment& env, Block& block)
 {
     while (env.op_stack.size() > 0 && env.t_arr.at(env.op_stack.back()).s_type != Token::LPAREN)
     {
         const Token& op = env.t_arr.at(env.op_stack.back());
         if (op.s_type == Token::MACRO) {
-            call_macro(op, env);
+            call_macro(op, env, block);
+        }
+        else if (op.s_type == Token::FUNCTION) {
+            call_function(op, env, block);
         }
         else {
-            evaluate_operator(op.s_type, env);
+            evaluate_operator(op.s_type, env, block);
         }
         env.op_stack.pop_back();
     }
@@ -633,10 +702,11 @@ void evaluate_till_lparen(Enviornment& env)
     // Remove l parentheses
     env.op_stack.pop_back();
 }
-// My lord... is that legal?
-void build_base_tree(Block* root, const std::vector<Token>& tokens, int start, int end);
 
-void build_conditional(Block* root, const std::vector<Token>& tokens, int start, int end)
+
+void build_base_tree(Block* root, const std::vector<Token>& tokens, int start, int end, FunctionTable& ft);
+
+void build_conditional(Block* root, const std::vector<Token>& tokens, int start, int end, FunctionTable& ft)
 {
     IfBlock* temp = new IfBlock;
     int paren = 0;
@@ -657,9 +727,9 @@ void build_conditional(Block* root, const std::vector<Token>& tokens, int start,
     root->children.push_back(temp);
     root->statement_indices.push_back(root->statements.size());
 
-    build_base_tree(temp, tokens, index, end);
+    build_base_tree(temp, tokens, index, end, ft);
 }
-void build_if_else(Block* root, const std::vector<Token>& tokens, int start, int end)
+void build_if_else(Block* root, const std::vector<Token>& tokens, int start, int end, FunctionTable& ft)
 {
     IfBlock* previous = dynamic_cast<IfBlock*>(root->children.back());
     assert(previous != NULL);
@@ -684,10 +754,10 @@ void build_if_else(Block* root, const std::vector<Token>& tokens, int start, int
     temp->parent = previous;
     temp->type = Block::ELIF;
 
-    build_base_tree(temp, tokens, index, end);
+    build_base_tree(temp, tokens, index, end, ft);
 
 }
-void build_else(Block* root, const std::vector<Token>& tokens, int start, int end)
+void build_else(Block* root, const std::vector<Token>& tokens, int start, int end, FunctionTable& ft)
 {
     IfBlock* previous = dynamic_cast<IfBlock*>(root->children.back());
     assert(previous != NULL);
@@ -698,7 +768,7 @@ void build_else(Block* root, const std::vector<Token>& tokens, int start, int en
     temp->parent = previous;
     temp->type = Block::ELSE;
 
-    build_base_tree(temp, tokens, start, end);
+    build_base_tree(temp, tokens, start, end, ft);
 
 }
 void build_general_statement(Block* root, const std::vector<Token>& tokens, int start, int end)
@@ -708,7 +778,31 @@ void build_general_statement(Block* root, const std::vector<Token>& tokens, int 
     temp.token_end = end;
     root->statements.push_back(temp);
 }
-void analyze_statement(Block* root, const std::vector<Token>& tokens, int start, int end, Block::Type& previous)
+// format: [FUNC_NAME(...)()...())]
+void build_function(Block* root, const std::vector<Token>& tokens, int start, int end, FunctionTable& ft)
+{
+    FuncBlock* temp = new FuncBlock;
+    int paren = 0;
+    int index = start+1;
+    assert(tokens.at(start).s_type == Token::FUNCTION);
+    do
+    {
+        if (tokens.at(index).s_type == Token::LPAREN)
+            paren++;
+        if (tokens.at(index).s_type == Token::RPAREN)
+            paren--;
+        index++;
+    } while (paren != 0 && index < end);
+    assert(paren == 0);
+    for (int i = start + 2; i < index-1; i++) {
+        assert(tokens.at(i).s_type == Token::L_VAR);
+        temp->parameters.push_back(tokens.at(i).string_var);
+    }
+    temp->type = Block::FUNCTION;
+    ft.insert({ tokens.at(start).string_var, temp });
+    build_base_tree(temp, tokens, index, end, ft);
+};
+void analyze_statement(Block* root, const std::vector<Token>& tokens, int start, int end, Block::Type& previous, FunctionTable& ft)
 {
     Token::Specific first_statement = Token::NONE;
     // Find first statement
@@ -722,17 +816,20 @@ void analyze_statement(Block* root, const std::vector<Token>& tokens, int start,
     {
     case Token::ELIF:
         assert(previous == Block::IF || previous == Block::ELIF);
-        build_if_else(root, tokens, i + 1, end);
+        build_if_else(root, tokens, i + 1, end, ft);
         previous = Block::ELIF;
         break;
     case Token::ELSE:
         assert(previous == Block::IF || previous == Block::ELIF);
-        build_else(root, tokens, i + 1, end);
+        build_else(root, tokens, i + 1, end, ft);
         previous = Block::ELSE;
         break;
     case Token::IF:
-        build_conditional(root, tokens, i + 1, end);
+        build_conditional(root, tokens, i + 1, end, ft);
         previous = Block::IF;
+        break;
+    case Token::FUNCTION_DEF:
+        build_function(root, tokens, i + 1, end, ft);
         break;
     default:
         // hack that works?
@@ -741,7 +838,7 @@ void analyze_statement(Block* root, const std::vector<Token>& tokens, int start,
         break;
     }
 }
-void build_base_tree(Block* root, const std::vector<Token>& tokens, int start, int end)
+void build_base_tree(Block* root, const std::vector<Token>& tokens, int start, int end, FunctionTable& ft)
 {
     int paren_level = 0;
     int statement_start = start;
@@ -752,13 +849,13 @@ void build_base_tree(Block* root, const std::vector<Token>& tokens, int start, i
         if (tokens.at(i).s_type == Token::RPAREN)
             paren_level--;
         if (paren_level == 0) {
-            analyze_statement(root, tokens, statement_start, i, previous);
+            analyze_statement(root, tokens, statement_start, i, previous, ft);
             statement_start = i + 1;
         }
     }
 
 }
-void evaluate_statement(Enviornment& env, int start, int end)
+void evaluate_statement(Enviornment& env, int start, int end, Block& block)
 {
     env.val_stack.clear();
     env.r_arr.clear();
@@ -780,13 +877,13 @@ void evaluate_statement(Enviornment& env, int start, int end)
                 break;
             case Token::Specific::RPAREN:
                 assert(!env.op_stack.empty() && "Mismatched parentheses");
-                evaluate_till_lparen(env);
+                evaluate_till_lparen(env, block);
                 break;
 
                 // Operators
             default:
                 assert(tok.s_type <= Token::ASSIGNMENT && "Invalid operator");
-                push_operator(env, index);
+                push_operator(env, index, block);
                 break;
             }
             break;
@@ -800,14 +897,25 @@ void evaluate_statement(Enviornment& env, int start, int end)
         const Token& tok = env.t_arr.at(env.op_stack.back());
         assert(tok.s_type != Token::LPAREN);
         if (tok.s_type == Token::MACRO) {
-            call_macro(tok, env);
+            call_macro(tok, env, block);
+        }
+        else if (tok.s_type == Token::FUNCTION) {
+            call_function(tok, env, block);
         }
         else {
-            evaluate_operator(tok.s_type, env);
+            evaluate_operator(tok.s_type, env, block);
         }
         env.op_stack.pop_back();
     }
 
+}
+void clean_up_variables(Enviornment& env)
+{
+    for (int i = 0; i < env.allocated_vars_in_block.back(); i++) {
+        env.vars.erase(env.variable_stack.back());
+        env.variable_stack.pop_back();
+    }
+    env.allocated_vars_in_block.pop_back();
 }
 void Block::execute_blocks_and_statements(Enviornment& env)
 {
@@ -824,7 +932,7 @@ void Block::execute_blocks_and_statements(Enviornment& env)
     {
         if (cur_stmt < stmt_till_block && cur_stmt < statements.size())
         {
-            evaluate_statement(env, statements.at(cur_stmt).token_start, statements.at(cur_stmt).token_end);
+            evaluate_statement(env, statements.at(cur_stmt).token_start, statements.at(cur_stmt).token_end, *this);
 
             ++cur_stmt;
         }
@@ -836,7 +944,9 @@ void Block::execute_blocks_and_statements(Enviornment& env)
             else {
                 stmt_till_block = statement_indices[stmt_indices_index];
             }
+            env.allocated_vars_in_block.push_back(0);
             children[stmt_indices_index]->execute(env);
+            clean_up_variables(env);
             stmt_indices_index++;
         }
         else {
@@ -851,17 +961,19 @@ void Block::execute(Enviornment& env)
 void IfBlock::execute(Enviornment& env)
 {
     if (has_statement) {
-        evaluate_statement(env, cond_statement.token_start, cond_statement.token_end);
+        evaluate_statement(env, cond_statement.token_start, cond_statement.token_end, *this);
         bool cond = get_integer_from_value(env);
         if (cond) {
-            return execute_blocks_and_statements(env);
+            execute_blocks_and_statements(env);
         }
         else if (else_block) {
-            return else_block->execute(env);
+            env.allocated_vars_in_block.push_back(0);
+            else_block->execute(env);
+            clean_up_variables(env);
         }
     }
     else {
-        return execute_blocks_and_statements(env);
+        execute_blocks_and_statements(env);
     }
 }
 #include <chrono>
@@ -915,19 +1027,42 @@ int read_line(Enviornment& env, std::stringstream& helper)
 
 ResultVal Interpreter::get_return_value()
 {
-    return get_resultval_from_top(*env);
+    return get_resultval_from_top(*env, *program_root);
 }
+#include <chrono>
 void Interpreter::interpret(std::string source)
 {
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+
     std::stringstream helper;
     helper << source;
-    delete env;
+    //delete env;
     delete program_root;
-    env = new Enviornment;
+    
+    if (env == nullptr) {
+        env = new Enviornment(*this);
+        env->allocated_vars_in_block.push_back(0);
+    }
+    else {
+        env->val_stack.clear();
+        env->op_stack.clear();
+        env->r_arr.clear();
+    }
+    
     program_root = new Block;
     read_line(*env, helper);
-    build_base_tree(program_root, env->t_arr, 0, env->t_arr.size());
+    std::chrono::steady_clock::time_point after_read = std::chrono::steady_clock::now();
+
+    build_base_tree(program_root, env->t_arr, index, env->t_arr.size(), this->functions);
+    std::chrono::steady_clock::time_point after_tree = std::chrono::steady_clock::now();
+
     program_root->execute(*env);
+    std::chrono::steady_clock::time_point after_run = std::chrono::steady_clock::now();
+    std::cout << "Lexing = " << std::chrono::duration_cast<std::chrono::microseconds>(after_read - start).count()/1000.0 << "ms" << std::endl;
+    std::cout << "AST = " << std::chrono::duration_cast<std::chrono::microseconds>(after_tree - after_read).count()/1000.0 << "ms" << std::endl;
+    std::cout << "Execution = " << std::chrono::duration_cast<std::chrono::microseconds>(after_run - after_tree).count() / 1000.0 << "ms" << std::endl;
+
+    index = env->t_arr.size();
 }
 void Interpreter::init_macros()
 {
