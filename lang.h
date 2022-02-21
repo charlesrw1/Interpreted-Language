@@ -59,10 +59,10 @@ struct ResultVal
     int integer=0;
     std::string str;
 };
-typedef ResultVal(*InterpFuncPtr)(Enviornment& env);
-struct Function
+typedef ResultVal(*MacroPtr)(Enviornment& env);
+struct Macro
 {
-    InterpFuncPtr ptr;
+    MacroPtr ptr;
     // For debugging mainly, -1 for multiple (ie takes all arguments from value stack), used for printing
     int num_arguments;
 };
@@ -74,10 +74,10 @@ public:
         delete env;
         delete program_root;
     }
-    static void init_functions();
+    static void init_macros();
     void interpret(std::string code);
     static std::unordered_map<std::string, Variable> variables;
-    static std::unordered_map<std::string, Function> functions;
+    static std::unordered_map<std::string, Macro> macros;
     static std::deque<std::string> events;
     static Variable& get_variable(std::string name)
     {
