@@ -88,7 +88,7 @@ public:
         else {
             // Default all variables to 0
             // Bad design? maybe
-            Variable v; v.type = Variable::INT; v.integer = 0;
+            Variable v; v.type = Variable::NONE;
             variables[name] = v;
         }
         return variables[name];

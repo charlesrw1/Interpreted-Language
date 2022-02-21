@@ -8,7 +8,7 @@
 #include <cstdio>
 #include "lang.h"
 
-#define LOG_PARSE
+//#define LOG_PARSE
 
 #ifdef LOG_PARSE
 #define LOG printf
@@ -167,7 +167,7 @@ ResultVal::ResultVal(const Token& token)
         }
     }
     else {
-        std::runtime_error("Unknown assignment type for ResultVal\n");
+        throw std::runtime_error("Unknown assignment type for ResultVal\n");
     }
 }
 struct Statement
@@ -269,7 +269,7 @@ INTERPFUNC(my_rand)
 }
 INTERPFUNC(print)
 {
-    for(int i = 0; i < env.val_stack.size();i++) {
+    while(!env.val_stack.empty()) {
         ResultVal rv = get_resultval_from_top(env);
         if(rv.type==ResultVal::INT) {
             std::cout << rv.integer << " ";
@@ -277,6 +277,7 @@ INTERPFUNC(print)
         else if (rv.type==ResultVal::STR) {
             std::cout << rv.str;
         }
+        env.val_stack.pop_back();
     }
     // Printing removes all vals from the stack
     ResultVal result(ResultVal::VOID);
@@ -498,7 +499,7 @@ void assignment_operation(Enviornment& env)
         }
         stored_var.type = Variable::STR;
     default:
-        std::runtime_error("Unknown type");
+        throw std::runtime_error("Unknown type");
     }
     env.val_stack.pop_back();
     env.val_stack.pop_back();
@@ -700,29 +701,31 @@ void analyze_statement(Block* root, const std::vector<Token>& tokens, int start,
 {
     Token::Specific first_statement=Token::NONE;
     // Find first statement
-    for(int i = start; i < end && i < tokens.size(); i++) {
+    int i;
+    for(i = start; i < end && i < tokens.size(); i++) {
         if(tokens.at(i).s_type==Token::LPAREN) continue;
         first_statement=tokens.at(i).s_type; break;
     }
-    assert(first_statement!=Token::NONE);
+    //assert(first_statement!=Token::NONE);
     switch(first_statement)
     {
     case Token::ELIF:
         assert(previous==Block::IF || previous==Block::ELIF);
-        build_if_else(root, tokens, start+2, end);
+        build_if_else(root, tokens, i+1, end);
         previous = Block::ELIF;
         break;
     case Token::ELSE:
         assert(previous==Block::IF || previous==Block::ELIF);
-        build_else(root, tokens, start+2, end);
+        build_else(root, tokens, i+1, end);
         previous = Block::ELSE;
         break;
     case Token::IF:
-        build_conditional(root, tokens, start+2, end);
+        build_conditional(root, tokens, i+1, end);
         previous = Block::IF;
         break;
     default:
-        build_general_statement(root, tokens, start, end);
+        // hack that works?
+        build_general_statement(root, tokens, i-1, end-(i-start-1));
         previous = Block::STATEMENT;
         break;
     }
