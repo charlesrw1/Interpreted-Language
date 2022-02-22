@@ -11,7 +11,7 @@ int main()
     inter.init_variable("welcome", Variable::STR);
     inter.set_variable("welcome", "Hello from C++");
 
-    std::ifstream infile("examples/fib.txt");
+    std::ifstream infile("examples/global_vars.txt");
     if (!infile)
         return 1;
     std::string line;
