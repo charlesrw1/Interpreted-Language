@@ -1,49 +1,73 @@
 #include <unordered_map>
 #include <deque>
 #include <string>
+#include <vector>
 #include <assert.h>
-struct Variable
+
+struct Enviornment;
+struct Token
 {
-    
-    enum Type
+    enum Specific
     {
+        FUNCTION,   // user defined functions in language
+        MACRO,      // functions in C++ accessible in language
+
+        //OPERATORS
+        LPAREN,
+        RPAREN,
+        NEGATE,
+        MULT,
+        DIV,
+        MOD,
+        PLUS,
+        MINUS,
+        LESS,
+        LESSEQ,
+        GREAT,
+        GREATEQ,
+        EQUALS,
+        NOTEQUALS,
+        LOGAND,
+        LOGOR,
+        ASSIGNMENT,
+
+        //VALUE TYPES
         INT,
         STR,
+        FLOAT,
+        G_VAR, // $variable
+        L_VAR, // variable
+
+        //KEYWORDS
+        IF,
+        ELSE,
+        ELIF,
+        WHILE,
+        DECLERATION,
+        FUNCTION_DEF,
+        LIST_DEF,
+        PTR_DEF,
+
+        COMMA,
+
         NONE
-    }type = NONE;
-    union {
+    }s_type;
+    enum General
+    {
+        VALUE,
+        OPERATOR,
+        KEYWORD,
+        SEPERATOR,
+    }g_type;
+
+    Token(General type) : g_type(type) {}
+    // Used for: function name, variable name, or string literal
+    std::string string_var;
+
+    // Data type value, later in union
     int integer;
-    std::string* str = NULL;
-    };
-    Variable(Type type=NONE) :type(type)
-    {
-        str = NULL;
-        if(type==STR) {
-            str = new std::string;
-        }
-    }
-    ~Variable()
-    {
-        if(type==STR) {
-            delete str;
-        }
-    }
-    Variable(const Variable& var)
-    {
-        if(var.type==STR) {
-            str = new std::string(*var.str);
-            type = STR;
-        }
-        else {
-            integer = var.integer;
-            type = INT;
-        }
-    }
 };
-struct Enviornment;
-struct Block;
-struct Token;
-struct FuncBlock;
+struct Variable;
 struct ResultVal
 {   
     enum Type
@@ -57,15 +81,60 @@ struct ResultVal
     ResultVal() {}
     ResultVal(ResultVal::Type type) : type(type) {}
     ResultVal(const Token& token);
+    ResultVal(const Variable& var);
     void assign_local_variable(const Token& tok, const Enviornment& env);
     int integer=0;
     std::string str;
 };
-typedef ResultVal(*MacroPtr)(Enviornment& env, Block& block);
+struct Variable
+{
+    enum Type
+    {
+        INT,
+        STR,
+
+        PTR,
+        LIST,
+
+        NONE
+    }type = NONE;
+    union {
+    int integer;
+    std::string* str = NULL;
+    std::vector<Variable>* list;
+    };
+    Variable(Type type=NONE) :type(type)
+    {
+        str = NULL;
+        if(type==STR) {
+            str = new std::string;
+        }
+        else if (type == LIST) {
+            list = new std::vector<Variable>;
+        }
+    }
+    ~Variable()
+    {
+        if(type==STR) {
+            delete str;
+        }
+        else if (type == LIST) {
+            delete list;
+        }
+    }
+    void assign_variable_type(Enviornment& env, const Token& tok);
+    Variable(const Variable& var);
+    Variable& operator=(const Variable& var);
+    Variable& operator=(const Token& tok);
+    Variable& operator=(const ResultVal& rv);
+    Variable(const ResultVal& rv);
+};
+struct Block;
+struct FuncBlock;
+typedef ResultVal(*MacroPtr)(Enviornment& env);
 struct Macro
 {
     MacroPtr ptr;
-    // For debugging mainly, -1 for multiple (ie takes all arguments from value stack), used for printing
     int num_arguments;
 };
 typedef std::unordered_map<std::string, FuncBlock*> FunctionTable;
@@ -79,6 +148,7 @@ public:
     }
     static void init_macros();
     void interpret(std::string code);
+    std::istream& interpret(std::istream& stream);
     static std::unordered_map<std::string, Variable> variables;
     static std::unordered_map<std::string, Macro> macros;
     static std::deque<std::string> events;
@@ -114,10 +184,17 @@ public:
         *variables[name].str = new_val;
     }
     ResultVal get_return_value();
+    // Reset interpreter state
+    void wipe_functions_and_tokens()
+    {
+        functions.clear();
+        env_tokens.clear();
+    }
+    // these shouldn't be here, but they need access across all enviornments
     FunctionTable functions;
+    std::vector<Token> env_tokens;
 private:
     unsigned index = 0;
-
     Block* program_root = nullptr;
     Enviornment* env = nullptr;
 

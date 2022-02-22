@@ -36,71 +36,13 @@ constexpr unsigned int string_hash(const char* str)
 }
 
 const char* keyword_str[] = {
-    "if", "else", "elif", "var","def"
+    "if", "else", "elif","while", "var","def", "list", "ptr"
 };
 
 const char* op_strings[] = {
     "F","(", ")", "!", "*", "/", "%", "+", "-",
-    "<", "<=", ">", ">=", "==", "!=", "&&", "||", ":=" };
-struct Token
-{
-    enum Specific
-    {
-        FUNCTION,   // user defined functions in language
-        MACRO,      // functions in C++ accessible in language
+    "<", "<=", ">", ">=", "==", "!=", "&&", "||", "=" };
 
-        //OPERATORS
-        LPAREN,
-        RPAREN,
-        NEGATE,
-        MULT,
-        DIV,
-        MOD,
-        PLUS,
-        MINUS,
-        LESS,
-        LESSEQ,
-        GREAT,
-        GREATEQ,
-        EQUALS,
-        NOTEQUALS,
-        LOGAND,
-        LOGOR,
-        ASSIGNMENT,
-
-        //VALUE TYPES
-        INT,
-        STR,
-        FLOAT,
-        G_VAR, // $variable
-        L_VAR, // variable
-
-        //KEYWORDS
-        IF,
-        ELSE,
-        ELIF,
-        DECLERATION,
-        FUNCTION_DEF,
-
-        COMMA,
-
-        NONE
-    }s_type;
-    enum General
-    {
-        VALUE,
-        OPERATOR,
-        KEYWORD,
-        SEPERATOR,
-    }g_type;
-
-    Token(General type) : g_type(type) {}
-    // Used for: function name, variable name, or string literal
-    string string_var;
-
-    // Data type value, later in union
-    int integer;
-};
 struct Value
 {
     enum Type
@@ -110,7 +52,131 @@ struct Value
     }type;
     int index;
 };
+Variable::Variable(const Variable& var)
+{
+    switch (var.type)
+    {
+    case INT:
+        integer = var.integer;
+        type = INT;
+        break;
+    case STR:
+        assert(type == NONE);
+        str = new string();
+        type = STR;
+        *str = *var.str;
+        break;
+    case LIST:
+        list = new std::vector<Variable>(*var.list);
+        type = LIST;
 
+        *list = *var.list;
+        break;
+    default:
+        throw std::runtime_error("Unknown type for assignment");
+        break;
+    }
+}
+Variable& Variable::operator=(const Token& tok)
+{
+    assert(type == (tok.s_type - Token::INT) || type == NONE);
+    if (tok.s_type == Token::INT) {
+        type = INT;
+        integer = tok.integer;
+    }
+    else if (tok.s_type == Token::STR) {
+        if (type == NONE) {
+            str = new std::string();
+            type = STR;
+        }
+        *str = tok.string_var;
+
+    }
+    else if (tok.s_type == Token::G_VAR) {
+        *this = Interpreter::get_variable(tok.string_var);
+    }
+    else {
+        throw std::runtime_error("Unknown type, use assign_variable_type for local or global variables");
+    }
+    return *this;
+}
+
+Variable& Variable::operator=(const Variable& var)
+{
+    assert(var.type == type || type == NONE);
+    switch (var.type)
+    {
+    case INT:
+        integer = var.integer;
+        type = INT;
+        break;
+    case STR:
+        if (type == NONE) {
+            str = new string();
+            type = STR;
+        }
+        *str = *var.str;
+        break;
+    case LIST:
+        if (type == NONE) {
+            list = new std::vector<Variable>(*var.list);
+            type = LIST;
+        }
+        else {
+            *list = *var.list;
+        }
+        break;
+    default:
+        std::runtime_error("Unknown type for assignment");
+        break;
+    }
+    return *this;
+}
+Variable::Variable(const ResultVal& rv)
+{
+    assert(type == rv.type || type == NONE);
+    switch (rv.type)
+    {
+    case INT:
+        integer = rv.integer;
+        type = INT;
+        break;
+    case STR:
+        if (type == NONE) {
+            str = new string(rv.str);
+            type = STR;
+        }
+        else {
+            *str = rv.str;
+        }
+        break;
+    default:
+        throw std::runtime_error("Unknown type");
+    }
+}
+Variable& Variable::operator=(const ResultVal& rv)
+{
+    assert(type == rv.type || type == NONE);
+    switch (rv.type)
+    {
+    case INT:
+        integer = rv.integer;
+        type = INT;
+        break;
+    case STR:
+        if (type == NONE) {
+            str = new string(rv.str);
+            type = STR;
+        }
+        else {
+            *str = rv.str;
+        }
+        break;
+    default:
+        throw std::runtime_error("Unknown type");
+    }
+    return *this;
+}
 ResultVal::ResultVal(const Token& token)
 {
     assert(token.g_type == Token::VALUE);
@@ -132,6 +198,9 @@ ResultVal::ResultVal(const Token& token)
             str = *v.str;
             type = STR;
         }
+        else {
+            throw std::runtime_error("Only string and integer types allowed to be passed bay value");
+        }
     }
     else if (token.s_type == Token::L_VAR) {
         throw std::runtime_error("Assign local variables through method assign_local_variable\n");
@@ -146,9 +215,10 @@ struct Statement
 };
 struct Enviornment
 {
-    Enviornment(Interpreter& inter) : inter(inter) {}
+    Enviornment(Interpreter& inter, std::vector <Token>& tokens) : inter(inter), t_arr(tokens) {}
+
     // read from input, don't get modified for life of program
-    std::vector<Token> t_arr;
+    std::vector<Token>& t_arr;
     // values either literals from tokens or resulting vals from operations
     std::vector<Value> val_stack;
     // resulting values, indexed into through val stack
@@ -160,13 +230,13 @@ struct Enviornment
     std::unordered_map<string, Variable> vars;
     std::vector<string> variable_stack;
     std::vector<unsigned int> allocated_vars_in_block;
-    
+
 
     Interpreter& inter;
 };
 struct Block
 {
-    Block* parent = NULL;
+    Block* parent = nullptr;
     std::vector<Block*> children;
     std::vector<Statement> statements;
     // Blocks and states are interweaved but are different types
@@ -183,6 +253,7 @@ struct Block
         ELIF,
         ELSE,
         FUNCTION,
+        WHILE,
         NONE
     };
     Type type = ROOT;
@@ -195,6 +266,16 @@ struct Block
     virtual void execute(Enviornment& env);
     void execute_blocks_and_statements(Enviornment& env);
 };
+void Variable::assign_variable_type(Enviornment& env, const Token& tok)
+{
+    auto find = env.vars.find(tok.string_var);
+    if (find != env.vars.end()) {
+        *this = find->second;
+    }
+    else {
+        throw std::runtime_error("Could not locate local variable for assignment: " + tok.string_var);
+    }
+}
 void ResultVal::assign_local_variable(const Token& tok, const Enviornment& env)
 {
     auto find = env.vars.find(tok.string_var);
@@ -207,9 +288,28 @@ void ResultVal::assign_local_variable(const Token& tok, const Enviornment& env)
             str = *find->second.str;
             type = STR;
         }
+        else {
+            throw std::runtime_error("Can't assign non int or string to resultval: " + tok.string_var);
+        }
     }
     else {
         throw std::runtime_error("Could not locate local variable for assignment: " + tok.string_var);
+    }
+}
+ResultVal::ResultVal(const Variable& var)
+{
+    switch (var.type)
+    {
+    case Variable::INT:
+        integer = var.integer;
+        type = INT;
+        break;
+    case Variable::STR:
+        str = *var.str;
+        type = STR;
+        break;
+    default:
+        throw std::runtime_error("Can't assign non int or string values");
     }
 }
 
@@ -222,7 +322,12 @@ struct IfBlock : public Block
     bool has_statement = true;
     Statement cond_statement;
     // Can be another ifblock or statement block
-    Block* else_block=nullptr;
+    Block* else_block = nullptr;
+    virtual void execute(Enviornment& env) override;
+};
+struct WhileBlock : public Block
+{
+    Statement cond_statement;
     virtual void execute(Enviornment& env) override;
 };
 struct FuncBlock : public Block
@@ -230,18 +335,9 @@ struct FuncBlock : public Block
     std::vector<string> parameters;
     string name;
 };
-// Does not pop, just peeks, UNSAFE!
-int get_integer_from_value(Enviornment& env)
-{
-    if (env.val_stack.back().type == Value::TOKEN) {
-        assert(env.t_arr.at(env.val_stack.back().index).s_type == Token::INT);
-        return env.t_arr.at(env.val_stack.back().index).integer;
-    }
-    assert(env.r_arr.at(env.val_stack.back().index).type == ResultVal::INT);
-    return env.r_arr.at(env.val_stack.back().index).integer;
-}
-// SAFER
-ResultVal get_resultval_from_top(Enviornment& env, Block& block)
+
+// SAFE
+ResultVal get_resultval_from_top(Enviornment& env)
 {
     ResultVal rv;
     assert(env.val_stack.size() > 0);
@@ -256,16 +352,42 @@ ResultVal get_resultval_from_top(Enviornment& env, Block& block)
     }
     return rv;
 }
-#define DEF_LANGMACRO(name) ResultVal name(Enviornment& env, Block& block)
-typedef ResultVal(*MacroPtr)(Enviornment& env, Block& block);
+// SAFE
+Variable get_variable_from_top(Enviornment& env)
+{
+    Variable v;
+    if (env.val_stack.back().type == Value::RESULT) {
+        v = env.r_arr.at(env.val_stack.back().index);
+    }
+    else if (env.t_arr.at(env.val_stack.back().index).s_type == Token::L_VAR) {
+        v.assign_variable_type(env, env.t_arr.at(env.val_stack.back().index));
+    }
+    else {
+        v = env.t_arr.at(env.val_stack.back().index);
+    }
+    return v;
+}
+// Gets refrence to top variable, assumes it is variable, throws otherwise
+Variable& get_top_variable_ref(Enviornment& env)
+{
+    assert(env.val_stack.back().type == Value::TOKEN);
+    const Token& top = env.t_arr.at(env.val_stack.back().index);
+    assert(top.s_type == Token::L_VAR || top.s_type == Token::G_VAR);
+    if (top.s_type == Token::L_VAR) {
+        return env.vars[top.string_var];
+    }
+    return Interpreter::get_variable(top.string_var);
+}
 
+#define DEF_LANGMACRO(name) ResultVal name(Enviornment& env)
+typedef ResultVal(*MacroPtr)(Enviornment& env);
 #include <random>
 DEF_LANGMACRO(my_rand)
 {
     assert(env.val_stack.size() >= 2);
-    int val2 = get_integer_from_value(env);
+    int val2 = get_resultval_from_top(env).integer;
     env.val_stack.pop_back();
-    int val1 = get_integer_from_value(env);
+    int val1 = get_resultval_from_top(env).integer;
     env.val_stack.pop_back();
 
     ResultVal rv;
@@ -274,16 +396,40 @@ DEF_LANGMACRO(my_rand)
 
     return rv;
 }
+void print_list(const Variable& v)
+{
+    std::cout << "[";
+    int i = 0;
+    for (const auto& var : *v.list) {
+        if (var.type == Variable::INT) {
+            std::cout << var.integer;
+        }
+        else if (var.type == Variable::STR) {
+            std::cout << *var.str;
+        }
+        else if (var.type == Variable::LIST) {
+            print_list(var);
+        }
+
+        if (i < v.list->size() - 1) std::cout << ", ";
+        i++;
+    }
+    std::cout << "]";
+}
 DEF_LANGMACRO(print)
 {
     // reads removes all vals from stack
     while (!env.val_stack.empty()) {
-        ResultVal rv = get_resultval_from_top(env, block);
-        if (rv.type == ResultVal::INT) {
-            std::cout << rv.integer << " ";
+        Variable v = get_variable_from_top(env);
+        if (v.type == Variable::LIST) {
+            print_list(v);
         }
-        else if (rv.type == ResultVal::STR) {
-            std::cout << rv.str;
+
+        else if (v.type == Variable::INT) {
+            std::cout << v.integer;
+        }
+        else if (v.type == Variable::STR) {
+            std::cout << *v.str;
         }
         env.val_stack.pop_back();
     }
@@ -292,16 +438,83 @@ DEF_LANGMACRO(print)
 
     return result;
 }
+// gets size of list
+DEF_LANGMACRO(length)
+{
+    Variable& v = get_top_variable_ref(env);
+    assert(v.type == Variable::LIST);
+    env.val_stack.pop_back();
+    ResultVal rv;
+    rv.type = ResultVal::INT;
+    rv.integer = v.list->size();
 
+    return rv;
+}
+DEF_LANGMACRO(head)
+{
+    Variable& v = get_top_variable_ref(env);
+    assert(v.type == Variable::LIST);
+    env.val_stack.pop_back();
+    ResultVal rv = v.list->front();
+
+    return rv;
+}
+DEF_LANGMACRO(at)
+{
+    Variable num = get_variable_from_top(env);
+    assert(num.type == Variable::INT);
+    env.val_stack.pop_back();
+    Variable& v = get_top_variable_ref(env);
+    assert(v.type == Variable::LIST);
+    env.val_stack.pop_back();
+    ResultVal rv = v.list->at(num.integer);
+
+    return rv;
+}
+DEF_LANGMACRO(find)
+{
+    Variable term = get_variable_from_top(env);
+    env.val_stack.pop_back();
+    Variable& v_list = get_top_variable_ref(env);
+    env.val_stack.pop_back();
+    assert(v_list.type == Variable::LIST);
+    ResultVal rv;
+    rv.type = ResultVal::INT;
+    rv.integer = 0;
+    for (const auto& t : *v_list.list) {
+        if (t.type == Variable::INT && term.type == Variable::INT) {
+            if (t.integer == term.integer) {
+                rv.integer = 1;
+                return rv;
+            }
+        }
+        else if (t.type == Variable::STR && term.type == Variable::STR) {
+            if (*t.str == *term.str) {
+                rv.integer = 1;
+                return rv;
+            }
+        }
+    }
+
+    return rv;
+}
+void clean_up_variables(Enviornment& env)
+{
+    for (int i = 0; i < env.allocated_vars_in_block.back(); i++) {
+        env.vars.erase(env.variable_stack.back());
+        env.variable_stack.pop_back();
+    }
+    env.allocated_vars_in_block.pop_back();
+}
 // Calls a built-in macro
-void call_macro(const Token& token, Enviornment& env, Block& block)
+void call_macro(const Token& token, Enviornment& env)
 {
     assert(token.s_type == Token::MACRO);
     auto found = Interpreter::macros.find(token.string_var);
     if (found == Interpreter::macros.end()) {
         throw std::runtime_error("Couldn't find macro: " + token.string_var);
     }
-    ResultVal result = found->second.ptr(env, block);
+    ResultVal result = found->second.ptr(env);
     if (result.type != ResultVal::VOID) {
         env.r_arr.push_back(result);
         int index = env.r_arr.size() - 1;
@@ -309,7 +522,7 @@ void call_macro(const Token& token, Enviornment& env, Block& block)
     }
 };
 
-void call_function(const Token& token, Enviornment& env, Block& block)
+void call_function(const Token& token, Enviornment& env)
 {
     assert(token.s_type == Token::FUNCTION);
     auto found = env.inter.functions.find(token.string_var);
@@ -317,23 +530,16 @@ void call_function(const Token& token, Enviornment& env, Block& block)
         throw std::runtime_error("Couldn't find function: " + token.string_var);
     }
     // Create new enviornment to call function
-    Enviornment* new_env = new Enviornment(env.inter);
+    Enviornment* new_env = new Enviornment(env.inter, env.inter.env_tokens);
     // bad, change later
-    new_env->t_arr = env.t_arr;
     FuncBlock* fu = found->second;
     // Load parameter variables into function locals
     assert(env.val_stack.size() >= fu->parameters.size());
-    for (int i = fu->parameters.size()-1; i >= 0; i--) {
-        ResultVal rv = get_resultval_from_top(env, block);
-        if (rv.type == ResultVal::INT) {
-            new_env->vars[fu->parameters.at(i)].type = Variable::INT;
-            new_env->vars[fu->parameters.at(i)].integer = rv.integer;
-        }
-        else {
-            new_env->vars[fu->parameters.at(i)].type = Variable::STR;
-            new_env->vars[fu->parameters.at(i)].str = new string;
-            *new_env->vars[fu->parameters.at(i)].str = rv.str;
-        }
+    for (int i = fu->parameters.size() - 1; i >= 0; i--) {
+        Variable v = get_variable_from_top(env);
+        //ResultVal rv = get_resultval_from_top(env, block);
+        new_env->vars[fu->parameters.at(i)] = v;
+
         env.val_stack.pop_back();
         new_env->variable_stack.push_back(fu->parameters.at(i));
     }
@@ -342,11 +548,12 @@ void call_function(const Token& token, Enviornment& env, Block& block)
     fu->execute(*new_env);
     // load result into previous stack
     if (new_env->val_stack.size() > 0) {
-        ResultVal rv = get_resultval_from_top(*new_env, block);
+        ResultVal rv = get_resultval_from_top(*new_env);
         env.r_arr.push_back(rv);
         int index = env.r_arr.size() - 1;
         env.val_stack.push_back({ Value::RESULT, index });
     }
+    clean_up_variables(*new_env);
     // clean up
     delete new_env;
 }
@@ -362,9 +569,11 @@ int check_for_operator(const std::string& line, const int index, std::vector<Tok
     bool double_wide = false;
     if (index + 1 < line.size()) {
         n_ch = line.at(index + 1);
-        if ((ch=='&'&&n_ch == '&') || n_ch == '|' || n_ch == '=')
+        if ((ch == '&' && n_ch == '&') || n_ch == '|' || n_ch == '=')
             double_wide = true;
     }
+    if (ch == '(' || ch == ')')
+        double_wide = false;
     for (i = 1; i < 18; i++) {
         if (ch == op_strings[i][0]) {
             if (double_wide) {
@@ -373,7 +582,7 @@ int check_for_operator(const std::string& line, const int index, std::vector<Tok
                     break;
                 }
             }
-            else if(strlen(op_strings[i]) == 1){
+            else if (strlen(op_strings[i]) == 1) {
                 is_op = true;
                 break;
             }
@@ -381,14 +590,14 @@ int check_for_operator(const std::string& line, const int index, std::vector<Tok
     }
     if (!is_op) return 0;
 
-    tok.s_type = (Token::Specific)(i+Token::MACRO);
+    tok.s_type = (Token::Specific)(i + Token::MACRO);
     output.push_back(tok);
 
     return 1 + double_wide;
 }
 int check_for_keyword(const string& str)
 {
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         if (str == keyword_str[i])
             return Token::IF + i;
     }
@@ -549,51 +758,49 @@ Variable& get_local_or_global_var(Enviornment& env, const Token& var)
     env.vars[var.string_var] = v;
     return env.vars[var.string_var];
 }
-void assignment_operation(Enviornment& env, Block& block)
+void list_assign(Enviornment& env, Variable& var)
+{
+    if (var.type != Variable::LIST) {
+        var.list = new std::vector<Variable>;
+        var.type = Variable::LIST;
+    }
+    while (env.val_stack.size() > 1) {
+        var.list->push_back(get_variable_from_top(env));
+        env.val_stack.pop_back();
+    }
+    env.val_stack.pop_back();
+}
+void assignment_operation(Enviornment& env)
 {
     assert(env.val_stack.size() >= 2);
-    assert(env.val_stack.at(env.val_stack.size() - 2).type == Value::TOKEN);
-    const Token& var = env.t_arr.at(env.val_stack.at(env.val_stack.size() - 2).index);
+    assert(env.val_stack.at(0).type == Value::TOKEN);
+    const Token& var = env.t_arr.at(env.val_stack.at(0).index);
     assert(var.s_type == Token::G_VAR || var.s_type == Token::L_VAR);
-// FIX ME, LOCAL VARIABLES
+    // FIX ME, LOCAL VARIABLES
     Variable& stored_var = get_local_or_global_var(env, var);
-    ResultVal assigned_value = get_resultval_from_top(env, block);
-    assert(assigned_value.type == stored_var.type || stored_var.type == Variable::NONE);
-    switch (assigned_value.type)
-    {
-    case ResultVal::INT:
-        stored_var.integer = assigned_value.integer;
-        stored_var.type = Variable::INT;
-        break;
-    case ResultVal::STR:
-        if (stored_var.type == Variable::NONE) {
-            stored_var.str = new string(assigned_value.str);
-        }
-        else {
-            *stored_var.str = assigned_value.str;
-        }
-        stored_var.type = Variable::STR;
-        break;
-    default:
-        throw std::runtime_error("Unknown type");
-        break;
+    // more 1 right hand variables
+    if (env.val_stack.size() > 2 || stored_var.type == Variable::LIST) {
+        return list_assign(env, stored_var);
     }
+
+    stored_var = get_variable_from_top(env);
     env.val_stack.pop_back();
     env.val_stack.pop_back();
 }
+
 // Evaluates operators from val stack, POPS THEM TOO!
-void evaluate_operator(Token::Specific op_type, Enviornment& env, Block& block)
+void evaluate_operator(Token::Specific op_type, Enviornment& env)
 {
     int val1, val2;
 
     if (op_type == Token::ASSIGNMENT) {
-        return assignment_operation(env, block);
+        return assignment_operation(env);
     }
 
-    val2 = get_resultval_from_top(env, block).integer;//get_integer_from_value(env);
+    val2 = get_resultval_from_top(env).integer;//get_integer_from_value(env);
     env.val_stack.pop_back();
     if (op_type != Token::NEGATE) {
-        val1 = get_resultval_from_top(env, block).integer;
+        val1 = get_resultval_from_top(env).integer;
         env.val_stack.pop_back();
     }
     int result = 0;
@@ -652,7 +859,7 @@ void evaluate_operator(Token::Specific op_type, Enviornment& env, Block& block)
     int index = env.r_arr.size() - 1;
     env.val_stack.push_back({ Value::RESULT, index });
 }
-void push_operator(Enviornment& env, int op_index, Block& block)
+void push_operator(Enviornment& env, int op_index)
 {
     const Token& pushed = env.t_arr.at(op_index);
     assert(pushed.s_type >= Token::FUNCTION && pushed.s_type <= Token::ASSIGNMENT);
@@ -669,10 +876,10 @@ void push_operator(Enviornment& env, int op_index, Block& block)
         {
             assert(env.val_stack.size() >= 2);
             if (top.s_type == Token::MACRO) {
-                call_macro(top, env, block);
+                call_macro(top, env);
             }
             else {
-                evaluate_operator(top.s_type, env, block);
+                evaluate_operator(top.s_type, env);
             }
             env.op_stack.pop_back();
         }
@@ -682,19 +889,19 @@ void push_operator(Enviornment& env, int op_index, Block& block)
     }
     env.op_stack.push_back(op_index);
 }
-void evaluate_till_lparen(Enviornment& env, Block& block)
+void evaluate_till_lparen(Enviornment& env)
 {
     while (env.op_stack.size() > 0 && env.t_arr.at(env.op_stack.back()).s_type != Token::LPAREN)
     {
         const Token& op = env.t_arr.at(env.op_stack.back());
         if (op.s_type == Token::MACRO) {
-            call_macro(op, env, block);
+            call_macro(op, env);
         }
         else if (op.s_type == Token::FUNCTION) {
-            call_function(op, env, block);
+            call_function(op, env);
         }
         else {
-            evaluate_operator(op.s_type, env, block);
+            evaluate_operator(op.s_type, env);
         }
         env.op_stack.pop_back();
     }
@@ -733,6 +940,9 @@ void build_if_else(Block* root, const std::vector<Token>& tokens, int start, int
 {
     IfBlock* previous = dynamic_cast<IfBlock*>(root->children.back());
     assert(previous != NULL);
+    while (previous->else_block) {
+        previous = dynamic_cast<IfBlock*>(previous->else_block);
+    }
 
 
     IfBlock* temp = new IfBlock;
@@ -761,6 +971,9 @@ void build_else(Block* root, const std::vector<Token>& tokens, int start, int en
 {
     IfBlock* previous = dynamic_cast<IfBlock*>(root->children.back());
     assert(previous != NULL);
+    while (previous->else_block) {
+        previous = dynamic_cast<IfBlock*>(previous->else_block);
+    }
 
     IfBlock* temp = new IfBlock;
     temp->has_statement = false;
@@ -783,7 +996,7 @@ void build_function(Block* root, const std::vector<Token>& tokens, int start, in
 {
     FuncBlock* temp = new FuncBlock;
     int paren = 0;
-    int index = start+1;
+    int index = start + 1;
     assert(tokens.at(start).s_type == Token::FUNCTION);
     do
     {
@@ -794,7 +1007,7 @@ void build_function(Block* root, const std::vector<Token>& tokens, int start, in
         index++;
     } while (paren != 0 && index < end);
     assert(paren == 0);
-    for (int i = start + 2; i < index-1; i++) {
+    for (int i = start + 2; i < index - 1; i++) {
         assert(tokens.at(i).s_type == Token::L_VAR);
         temp->parameters.push_back(tokens.at(i).string_var);
     }
@@ -802,6 +1015,30 @@ void build_function(Block* root, const std::vector<Token>& tokens, int start, in
     ft.insert({ tokens.at(start).string_var, temp });
     build_base_tree(temp, tokens, index, end, ft);
 };
+void build_while_loop(Block* root, const std::vector<Token>& tokens, int start, int end, FunctionTable& ft)
+{
+    WhileBlock* temp = new WhileBlock;
+    int paren = 0;
+    int index = start;
+    do
+    {
+        if (tokens.at(index).s_type == Token::LPAREN)
+            paren++;
+        if (tokens.at(index).s_type == Token::RPAREN)
+            paren--;
+        index++;
+    } while (paren != 0 && index < end);
+    assert(paren == 0);
+    temp->cond_statement.token_start = start;
+    temp->cond_statement.token_end = index - 1;
+    temp->parent = root;
+    temp->type = Block::WHILE;
+    root->children.push_back(temp);
+    root->statement_indices.push_back(root->statements.size());
+
+    build_base_tree(temp, tokens, index, end, ft);
+
+}
 void analyze_statement(Block* root, const std::vector<Token>& tokens, int start, int end, Block::Type& previous, FunctionTable& ft)
 {
     Token::Specific first_statement = Token::NONE;
@@ -831,6 +1068,9 @@ void analyze_statement(Block* root, const std::vector<Token>& tokens, int start,
     case Token::FUNCTION_DEF:
         build_function(root, tokens, i + 1, end, ft);
         break;
+    case Token::WHILE:
+        build_while_loop(root, tokens, i + 1, end, ft);
+        break;
     default:
         // hack that works?
         build_general_statement(root, tokens, i - 1, end - (i - start - 1));
@@ -855,7 +1095,7 @@ void build_base_tree(Block* root, const std::vector<Token>& tokens, int start, i
     }
 
 }
-void evaluate_statement(Enviornment& env, int start, int end, Block& block)
+void evaluate_statement(Enviornment& env, int start, int end)
 {
     env.val_stack.clear();
     env.r_arr.clear();
@@ -877,15 +1117,17 @@ void evaluate_statement(Enviornment& env, int start, int end, Block& block)
                 break;
             case Token::Specific::RPAREN:
                 assert(!env.op_stack.empty() && "Mismatched parentheses");
-                evaluate_till_lparen(env, block);
+                evaluate_till_lparen(env);
                 break;
 
                 // Operators
             default:
                 assert(tok.s_type <= Token::ASSIGNMENT && "Invalid operator");
-                push_operator(env, index, block);
+                push_operator(env, index);
                 break;
             }
+            break;
+        case Token::General::KEYWORD:
             break;
         default:
             break;
@@ -897,25 +1139,17 @@ void evaluate_statement(Enviornment& env, int start, int end, Block& block)
         const Token& tok = env.t_arr.at(env.op_stack.back());
         assert(tok.s_type != Token::LPAREN);
         if (tok.s_type == Token::MACRO) {
-            call_macro(tok, env, block);
+            call_macro(tok, env);
         }
         else if (tok.s_type == Token::FUNCTION) {
-            call_function(tok, env, block);
+            call_function(tok, env);
         }
         else {
-            evaluate_operator(tok.s_type, env, block);
+            evaluate_operator(tok.s_type, env);
         }
         env.op_stack.pop_back();
     }
 
-}
-void clean_up_variables(Enviornment& env)
-{
-    for (int i = 0; i < env.allocated_vars_in_block.back(); i++) {
-        env.vars.erase(env.variable_stack.back());
-        env.variable_stack.pop_back();
-    }
-    env.allocated_vars_in_block.pop_back();
 }
 void Block::execute_blocks_and_statements(Enviornment& env)
 {
@@ -932,13 +1166,13 @@ void Block::execute_blocks_and_statements(Enviornment& env)
     {
         if (cur_stmt < stmt_till_block && cur_stmt < statements.size())
         {
-            evaluate_statement(env, statements.at(cur_stmt).token_start, statements.at(cur_stmt).token_end, *this);
+            evaluate_statement(env, statements.at(cur_stmt).token_start, statements.at(cur_stmt).token_end);
 
             ++cur_stmt;
         }
         else if (stmt_indices_index < statement_indices.size())
         {
-            if (stmt_indices_index >= statement_indices.size()) {
+            if (stmt_indices_index >= statement_indices.size()-1) {
                 stmt_till_block = INT32_MAX;
             }
             else {
@@ -961,9 +1195,10 @@ void Block::execute(Enviornment& env)
 void IfBlock::execute(Enviornment& env)
 {
     if (has_statement) {
-        evaluate_statement(env, cond_statement.token_start, cond_statement.token_end, *this);
-        bool cond = get_integer_from_value(env);
-        if (cond) {
+        evaluate_statement(env, cond_statement.token_start, cond_statement.token_end);
+        ResultVal v = get_resultval_from_top(env);
+        assert(v.type == ResultVal::INT);
+        if (v.integer) {
             execute_blocks_and_statements(env);
         }
         else if (else_block) {
@@ -976,8 +1211,20 @@ void IfBlock::execute(Enviornment& env)
         execute_blocks_and_statements(env);
     }
 }
+void WhileBlock::execute(Enviornment& env)
+{
+    evaluate_statement(env, cond_statement.token_start, cond_statement.token_end);
+    ResultVal v = get_resultval_from_top(env);
+    int cond = v.integer;
+    assert(v.type == ResultVal::INT);
+    while (cond) {
+        execute_blocks_and_statements(env);
+        evaluate_statement(env, cond_statement.token_start, cond_statement.token_end);
+        cond = get_resultval_from_top(env).integer;
+    }
+}
 #include <chrono>
-int read_line(Enviornment& env, std::stringstream& helper)
+int read_line(Enviornment& env, std::istream& helper)
 {
     std::string line;
     while (std::getline(helper, line))
@@ -1027,42 +1274,14 @@ int read_line(Enviornment& env, std::stringstream& helper)
 
 ResultVal Interpreter::get_return_value()
 {
-    return get_resultval_from_top(*env, *program_root);
+    return get_resultval_from_top(*env);
 }
 #include <chrono>
 void Interpreter::interpret(std::string source)
 {
-    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-
     std::stringstream helper;
     helper << source;
-    //delete env;
-    delete program_root;
-    
-    if (env == nullptr) {
-        env = new Enviornment(*this);
-        env->allocated_vars_in_block.push_back(0);
-    }
-    else {
-        env->val_stack.clear();
-        env->op_stack.clear();
-        env->r_arr.clear();
-    }
-    
-    program_root = new Block;
-    read_line(*env, helper);
-    std::chrono::steady_clock::time_point after_read = std::chrono::steady_clock::now();
-
-    build_base_tree(program_root, env->t_arr, index, env->t_arr.size(), this->functions);
-    std::chrono::steady_clock::time_point after_tree = std::chrono::steady_clock::now();
-
-    program_root->execute(*env);
-    std::chrono::steady_clock::time_point after_run = std::chrono::steady_clock::now();
-    std::cout << "Lexing = " << std::chrono::duration_cast<std::chrono::microseconds>(after_read - start).count()/1000.0 << "ms" << std::endl;
-    std::cout << "AST = " << std::chrono::duration_cast<std::chrono::microseconds>(after_tree - after_read).count()/1000.0 << "ms" << std::endl;
-    std::cout << "Execution = " << std::chrono::duration_cast<std::chrono::microseconds>(after_run - after_tree).count() / 1000.0 << "ms" << std::endl;
-
-    index = env->t_arr.size();
+    interpret(helper);
 }
 void Interpreter::init_macros()
 {
@@ -1073,4 +1292,47 @@ void Interpreter::init_macros()
     f.ptr = &my_rand;
     f.num_arguments = 2;
     macros.insert({ "rand", f });
+    f.ptr = &length;
+    f.num_arguments = 1;
+    macros.insert({ "length",f });
+    f.ptr = &at;
+    f.num_arguments = 2;
+    macros.insert({ "at",f });
+    f.ptr = &head;
+    f.num_arguments = 1;
+    macros.insert({ "head",f });
+    f.ptr = &find;
+    f.num_arguments = 2;
+    macros.insert({ "find", f });
 };
+std::istream& Interpreter::interpret(std::istream& stream)
+{
+    delete program_root;
+    if (env == nullptr) {
+        env = new Enviornment(*this, this->env_tokens);
+        env->allocated_vars_in_block.push_back(0);
+    }
+    else {
+        env->val_stack.clear();
+        env->op_stack.clear();
+        env->r_arr.clear();
+    }
+
+    program_root = new Block;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    read_line(*env, stream);
+    std::chrono::steady_clock::time_point after_read = std::chrono::steady_clock::now();
+
+    build_base_tree(program_root, env->t_arr, index, env->t_arr.size(), this->functions);
+    std::chrono::steady_clock::time_point after_tree = std::chrono::steady_clock::now();
+
+    program_root->execute(*env);
+    std::chrono::steady_clock::time_point after_run = std::chrono::steady_clock::now();
+    std::cout << "Lexing = " << std::chrono::duration_cast<std::chrono::microseconds>(after_read - start).count() / 1000.0 << "ms" << std::endl;
+    std::cout << "Flow tree = " << std::chrono::duration_cast<std::chrono::microseconds>(after_tree - after_read).count() / 1000.0 << "ms" << std::endl;
+    std::cout << "Execution = " << std::chrono::duration_cast<std::chrono::microseconds>(after_run - after_tree).count() / 1000.0 << "ms" << std::endl;
+
+    index = env->t_arr.size();
+
+    return stream;
+}
