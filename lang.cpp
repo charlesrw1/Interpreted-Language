@@ -563,9 +563,15 @@ int check_for_symbol(const std::string& line, const int index, std::vector<Token
 int check_for_num_literal(const std::string& line, const int index, std::vector<Token>& output)
 {
     char ch = line.at(index);
-    if (!isdigit(ch) || line.size() < index + 2) return -1;
+    bool negative = false;
+    if (ch == '-') negative = true;
+    if ((!isdigit(ch) || line.size() < index + 2) && !negative) return -1;
     // ERROR! check indicies
-    int offset = 1;
+    if (negative && output.back().g_type != Token::OPERATOR) {
+        return -1;
+    }
+
+    int offset = 1+negative;
     ch = line.at(index + offset);
     while (isdigit(ch) && line.size() > index + offset + 1) {
         ch = line.at(index + ++offset);
@@ -689,7 +695,7 @@ void evaluate_operator(Token::Specific op_type, Enviornment& env)
         result = val1 * val2;
         break;
     case Token::DIV:
-        result = val1 * val2;
+        result = val1 / val2;
         break;
     case Token::MOD:
         result = val1 % val2;
@@ -1116,6 +1122,11 @@ int read_line(Enviornment& env, std::istream& helper)
         for (int i = 0; i < line.size(); i++) {
             if (line.at(i) == ' ' || line.at(i) == '\t') continue;
 
+            int num_res = check_for_num_literal(line, i, env.t_arr);
+            if (num_res >= 0) {
+                i += num_res;
+                continue;
+            }
             int op_res = check_for_operator(line, i, env.t_arr);
             // CHECK FOR CURRENT WORDS/NUMS
             if (op_res == 1) continue;
@@ -1133,11 +1144,6 @@ int read_line(Enviornment& env, std::istream& helper)
                 continue;
             }
 
-            int num_res = check_for_num_literal(line, i, env.t_arr);
-            if (num_res >= 0) {
-                i += num_res;
-                continue;
-            }
 
             // failed to parse
             printf("UNKNOWN SYMBOL @ index %d, line=%s", i, line.c_str());
