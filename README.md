@@ -1,5 +1,5 @@
 # Interpreted-Language
-A simple interpreted language in C++. The syntax is similar to kind of like lisp, but I changed some things.
+A simple interpreted language in C++. The syntax is kind of like lisp but otherwise not.
 
 User defined functions: `(def &func(arg1 arg2)(...)(...))` `(&func(1 2))`
 
