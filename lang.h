@@ -4,7 +4,6 @@
 #include <vector>
 #include <assert.h>
 
-struct Enviornment;
 struct Token
 {
     enum Specific
@@ -68,6 +67,7 @@ struct Token
     int integer;
 };
 struct Variable;
+struct Enviornment;
 struct ResultVal
 {   
     enum Type
@@ -131,12 +131,7 @@ struct Variable
 };
 struct Block;
 struct FuncBlock;
-typedef ResultVal(*MacroPtr)(Enviornment& env);
-struct Macro
-{
-    MacroPtr ptr;
-    int num_arguments;
-};
+typedef ResultVal(*Macro)(Enviornment& env);
 typedef std::unordered_map<std::string, FuncBlock*> FunctionTable;
 class Interpreter
 {

@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <stdexcept>
 #include <cstdio>
+#include <sstream>
 #include "lang.h"
 
 //#define LOG_PARSE
@@ -16,6 +17,9 @@
 #define LOG
 #endif
 
+#define PROFILING
+
+#define IFN(expression) if(!(expression))
 
 using std::string;
 
@@ -26,6 +30,7 @@ std::deque<string> Interpreter::events;
 
 constexpr unsigned int string_hash(const char* str)
 {
+
     unsigned h = 37;
     while (*str)
     {
@@ -61,7 +66,6 @@ Variable::Variable(const Variable& var)
         type = INT;
         break;
     case STR:
-        assert(type == NONE);
         str = new string();
         type = STR;
         *str = *var.str;
@@ -72,6 +76,8 @@ Variable::Variable(const Variable& var)
 
         *list = *var.list;
         break;
+    case NONE:
+        break;
     default:
         throw std::runtime_error("Unknown type for assignment");
         break;
@@ -80,6 +86,7 @@ Variable::Variable(const Variable& var)
 Variable& Variable::operator=(const Token& tok)
 {
     assert(type == (tok.s_type - Token::INT) || type == NONE);
+
     if (tok.s_type == Token::INT) {
         type = INT;
         integer = tok.integer;
@@ -126,8 +133,10 @@ Variable& Variable::operator=(const Variable& var)
             *list = *var.list;
         }
         break;
+    case NONE:
+        break;
     default:
-        std::runtime_error("Unknown type for assignment");
+        throw std::runtime_error("Unknown type for assignment");
         break;
     }
     return *this;
@@ -379,125 +388,6 @@ Variable& get_top_variable_ref(Enviornment& env)
     return Interpreter::get_variable(top.string_var);
 }
 
-#define DEF_LANGMACRO(name) ResultVal name(Enviornment& env)
-typedef ResultVal(*MacroPtr)(Enviornment& env);
-#include <random>
-DEF_LANGMACRO(my_rand)
-{
-    assert(env.val_stack.size() >= 2);
-    int val2 = get_resultval_from_top(env).integer;
-    env.val_stack.pop_back();
-    int val1 = get_resultval_from_top(env).integer;
-    env.val_stack.pop_back();
-
-    ResultVal rv;
-    rv.type = ResultVal::INT;
-    rv.integer = val1 + (rand() % (val2 - val1));
-
-    return rv;
-}
-void print_list(const Variable& v)
-{
-    std::cout << "[";
-    int i = 0;
-    for (const auto& var : *v.list) {
-        if (var.type == Variable::INT) {
-            std::cout << var.integer;
-        }
-        else if (var.type == Variable::STR) {
-            std::cout << *var.str;
-        }
-        else if (var.type == Variable::LIST) {
-            print_list(var);
-        }
-
-        if (i < v.list->size() - 1) std::cout << ", ";
-        i++;
-    }
-    std::cout << "]";
-}
-DEF_LANGMACRO(print)
-{
-    // reads removes all vals from stack
-    while (!env.val_stack.empty()) {
-        Variable v = get_variable_from_top(env);
-        if (v.type == Variable::LIST) {
-            print_list(v);
-        }
-
-        else if (v.type == Variable::INT) {
-            std::cout << v.integer;
-        }
-        else if (v.type == Variable::STR) {
-            std::cout << *v.str;
-        }
-        env.val_stack.pop_back();
-    }
-    ResultVal result(ResultVal::VOID);
-    std::cout << "\n";
-
-    return result;
-}
-// gets size of list
-DEF_LANGMACRO(length)
-{
-    Variable& v = get_top_variable_ref(env);
-    assert(v.type == Variable::LIST);
-    env.val_stack.pop_back();
-    ResultVal rv;
-    rv.type = ResultVal::INT;
-    rv.integer = v.list->size();
-
-    return rv;
-}
-DEF_LANGMACRO(head)
-{
-    Variable& v = get_top_variable_ref(env);
-    assert(v.type == Variable::LIST);
-    env.val_stack.pop_back();
-    ResultVal rv = v.list->front();
-
-    return rv;
-}
-DEF_LANGMACRO(at)
-{
-    Variable num = get_variable_from_top(env);
-    assert(num.type == Variable::INT);
-    env.val_stack.pop_back();
-    Variable& v = get_top_variable_ref(env);
-    assert(v.type == Variable::LIST);
-    env.val_stack.pop_back();
-    ResultVal rv = v.list->at(num.integer);
-
-    return rv;
-}
-DEF_LANGMACRO(find)
-{
-    Variable term = get_variable_from_top(env);
-    env.val_stack.pop_back();
-    Variable& v_list = get_top_variable_ref(env);
-    env.val_stack.pop_back();
-    assert(v_list.type == Variable::LIST);
-    ResultVal rv;
-    rv.type = ResultVal::INT;
-    rv.integer = 0;
-    for (const auto& t : *v_list.list) {
-        if (t.type == Variable::INT && term.type == Variable::INT) {
-            if (t.integer == term.integer) {
-                rv.integer = 1;
-                return rv;
-            }
-        }
-        else if (t.type == Variable::STR && term.type == Variable::STR) {
-            if (*t.str == *term.str) {
-                rv.integer = 1;
-                return rv;
-            }
-        }
-    }
-
-    return rv;
-}
 void clean_up_variables(Enviornment& env)
 {
     for (int i = 0; i < env.allocated_vars_in_block.back(); i++) {
@@ -514,7 +404,7 @@ void call_macro(const Token& token, Enviornment& env)
     if (found == Interpreter::macros.end()) {
         throw std::runtime_error("Couldn't find macro: " + token.string_var);
     }
-    ResultVal result = found->second.ptr(env);
+    ResultVal result = found->second(env);
     if (result.type != ResultVal::VOID) {
         env.r_arr.push_back(result);
         int index = env.r_arr.size() - 1;
@@ -567,7 +457,7 @@ int check_for_operator(const std::string& line, const int index, std::vector<Tok
     char ch = line.at(index);
     char n_ch;
     bool double_wide = false;
-    if (index + 1 < line.size()) {
+    if (index + 1 < line.size() && ch != '(' && ch != ')') {
         n_ch = line.at(index + 1);
         if ((ch == '&' && n_ch == '&') || n_ch == '|' || n_ch == '=')
             double_wide = true;
@@ -591,6 +481,7 @@ int check_for_operator(const std::string& line, const int index, std::vector<Tok
     if (!is_op) return 0;
 
     tok.s_type = (Token::Specific)(i + Token::MACRO);
+
     output.push_back(tok);
 
     return 1 + double_wide;
@@ -623,12 +514,12 @@ int check_for_symbol(const std::string& line, const int index, std::vector<Token
 
     int offset = 0;
     while (isalpha(ch) || isdigit(ch) || ch == '_') {
-        ch = line.at(index + var + ++offset);
+        ch = line.at(index + global_var + ++offset);
     }
-    if (var && offset == 0) {
+    if (global_var && offset == 0) {
         throw std::runtime_error("Unexpected $ symbol");
     }
-    std::string word = line.substr(index + var, offset);
+    std::string word = line.substr(index + global_var, offset);
 
     Token tok(Token::OPERATOR);
     if (global_var) {
@@ -666,7 +557,7 @@ int check_for_symbol(const std::string& line, const int index, std::vector<Token
 
     output.push_back(tok);
 
-    return offset + var - 1;
+    return offset + global_var - 1;
 }
 // only integers for now
 int check_for_num_literal(const std::string& line, const int index, std::vector<Token>& output)
@@ -716,9 +607,6 @@ int check_for_str_literal(const std::string& line, const int index, std::vector<
 
     return offset;
 }
-
-#include <fstream>
-#include <sstream>
 void remove_white_space(string& str)
 {
     int i;
@@ -726,18 +614,6 @@ void remove_white_space(string& str)
         if (str.at(i) != ' ' && str.at(i) != '\t') break;
     }
     str.erase(0, i);
-}
-bool test_open_file(std::string* result, const char* file_name)
-{
-    std::ifstream infile(file_name);
-    if (!infile) {
-        printf("Couldn't open file %s\n", file_name);
-        return false;
-    }
-    std::stringstream ss;
-    ss << infile.rdbuf();
-    (*result) = ss.str();
-    return true;
 }
 Variable& get_local_or_global_var(Enviornment& env, const Token& var)
 {
@@ -1283,26 +1159,139 @@ void Interpreter::interpret(std::string source)
     helper << source;
     interpret(helper);
 }
+
+#define DEF_LANGMACRO(name) ResultVal name(Enviornment& env)
+#include <random>
+DEF_LANGMACRO(my_rand)
+{
+    assert(env.val_stack.size() >= 2);
+    int val2 = get_resultval_from_top(env).integer;
+    env.val_stack.pop_back();
+    int val1 = get_resultval_from_top(env).integer;
+    env.val_stack.pop_back();
+
+    ResultVal rv;
+    rv.type = ResultVal::INT;
+    rv.integer = val1 + (rand() % (val2 - val1));
+
+    return rv;
+}
+void print_list(const Variable& v)
+{
+    std::cout << "[";
+    int i = 0;
+    for (const auto& var : *v.list) {
+        if (var.type == Variable::INT) {
+            std::cout << var.integer;
+        }
+        else if (var.type == Variable::STR) {
+            std::cout << *var.str;
+        }
+        else if (var.type == Variable::LIST) {
+            print_list(var);
+        }
+
+        if (i < v.list->size() - 1) std::cout << ", ";
+        i++;
+    }
+    std::cout << "]";
+}
+DEF_LANGMACRO(print)
+{
+    // reads removes all vals from stack
+    while (!env.val_stack.empty()) {
+        Variable v = get_variable_from_top(env);
+        if (v.type == Variable::LIST) {
+            print_list(v);
+        }
+
+        else if (v.type == Variable::INT) {
+            std::cout << v.integer;
+        }
+        else if (v.type == Variable::STR) {
+            std::cout << *v.str;
+        }
+        env.val_stack.pop_back();
+    }
+    ResultVal result(ResultVal::VOID);
+    std::cout << "\n";
+
+    return result;
+}
+// gets size of list
+DEF_LANGMACRO(length)
+{
+    Variable& v = get_top_variable_ref(env);
+    assert(v.type == Variable::LIST);
+    env.val_stack.pop_back();
+    ResultVal rv;
+    rv.type = ResultVal::INT;
+    rv.integer = v.list->size();
+
+    return rv;
+}
+DEF_LANGMACRO(head)
+{
+    Variable& v = get_top_variable_ref(env);
+    assert(v.type == Variable::LIST);
+    env.val_stack.pop_back();
+    ResultVal rv = v.list->front();
+
+    return rv;
+}
+DEF_LANGMACRO(at)
+{
+    Variable num = get_variable_from_top(env);
+    assert(num.type == Variable::INT);
+    env.val_stack.pop_back();
+    Variable& v = get_top_variable_ref(env);
+    assert(v.type == Variable::LIST);
+    env.val_stack.pop_back();
+    ResultVal rv = v.list->at(num.integer);
+
+    return rv;
+}
+DEF_LANGMACRO(find)
+{
+    Variable term = get_variable_from_top(env);
+    env.val_stack.pop_back();
+    Variable& v_list = get_top_variable_ref(env);
+    env.val_stack.pop_back();
+    assert(v_list.type == Variable::LIST);
+    ResultVal rv;
+    rv.type = ResultVal::INT;
+    rv.integer = 0;
+    for (const auto& t : *v_list.list) {
+        if (t.type == Variable::INT && term.type == Variable::INT) {
+            if (t.integer == term.integer) {
+                rv.integer = 1;
+                return rv;
+            }
+        }
+        else if (t.type == Variable::STR && term.type == Variable::STR) {
+            if (*t.str == *term.str) {
+                rv.integer = 1;
+                return rv;
+            }
+        }
+    }
+
+    return rv;
+}
 void Interpreter::init_macros()
 {
     Macro f;
-    f.ptr = &print;
-    f.num_arguments = -1;
+    f = &print;
     macros.insert({ "print", f });
-    f.ptr = &my_rand;
-    f.num_arguments = 2;
+    f = &my_rand;
     macros.insert({ "rand", f });
-    f.ptr = &length;
-    f.num_arguments = 1;
+    f = &length;
     macros.insert({ "length",f });
-    f.ptr = &at;
-    f.num_arguments = 2;
+    f = &at;
     macros.insert({ "at",f });
-    f.ptr = &head;
-    f.num_arguments = 1;
+    f = &head;
     macros.insert({ "head",f });
-    f.ptr = &find;
-    f.num_arguments = 2;
+    f = &find;
     macros.insert({ "find", f });
 };
 std::istream& Interpreter::interpret(std::istream& stream)
@@ -1325,12 +1314,22 @@ std::istream& Interpreter::interpret(std::istream& stream)
 
     build_base_tree(program_root, env->t_arr, index, env->t_arr.size(), this->functions);
     std::chrono::steady_clock::time_point after_tree = std::chrono::steady_clock::now();
-
     program_root->execute(*env);
+    /*
+    try {
+    }
+    catch (const std::exception& exc) {
+        std::cerr << exc.what() << std::endl;
+    }
+    */
     std::chrono::steady_clock::time_point after_run = std::chrono::steady_clock::now();
+
+
+#ifdef PROFILING
     std::cout << "Lexing = " << std::chrono::duration_cast<std::chrono::microseconds>(after_read - start).count() / 1000.0 << "ms" << std::endl;
     std::cout << "Flow tree = " << std::chrono::duration_cast<std::chrono::microseconds>(after_tree - after_read).count() / 1000.0 << "ms" << std::endl;
     std::cout << "Execution = " << std::chrono::duration_cast<std::chrono::microseconds>(after_run - after_tree).count() / 1000.0 << "ms" << std::endl;
+#endif // PROFILING
 
     index = env->t_arr.size();
 
